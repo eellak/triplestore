@@ -182,8 +182,18 @@ class GraphDB(TriplestoreBackend):
         RuntimeError
             If the server responds with an error status.
         """
-        qstrip = sparql.lstrip()
-        query_type = qstrip.split(None, 1)[0].upper() if qstrip else ""
+        # qstrip = sparql.lstrip()
+        # query_type = qstrip.split(None, 1)[0].upper() if qstrip else ""
+
+        lines = [line.strip() for line in sparql.strip().splitlines() if line.strip()]
+
+        query_type = ""
+        for line in lines:
+            upper = line.upper()
+            if upper.startswith("PREFIX ") or upper.startswith("BASE "):
+                continue
+            query_type = line.split(None, 1)[0].upper()
+            break
 
         # SELECT / ASK
         if query_type in {"SELECT", "ASK"}:
@@ -303,7 +313,7 @@ class GraphDB(TriplestoreBackend):
             graphdb:enable-predicate-list "true"^^xsd:boolean ;
             graphdb:in-memory-literal-properties "false"^^xsd:boolean ;
             graphdb:enable-literal-index "true"^^xsd:boolean ;
-            graphdb:enable-geo-spatial "false"^^xsd:boolean ;
+            graphdb:enable-geo-spatial "true"^^xsd:boolean ;
             graphdb:enable-full-text-search "false"^^xsd:boolean ;
             graphdb:fts-index-policy "ALL" ;
             graphdb:strict-parsing "true"^^xsd:boolean ;

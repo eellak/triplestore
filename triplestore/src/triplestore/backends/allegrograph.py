@@ -152,13 +152,37 @@ class AllegroGraph(TriplestoreBackend):
         o : str
             The object URI of the triple.
         """
+        # triple = f"<{s}> <{p}> <{o}> ."
+        # sparql = (
+        #     f"INSERT DATA {{ GRAPH <{self.graph_uri}> {{ {triple} }} }}"
+        #     if self.graph_uri else
+        #     f"INSERT DATA {{ {triple} }}"
+        # )
+        # self._run_update(sparql)
+
         triple = f"<{s}> <{p}> <{o}> ."
-        sparql = (
-            f"INSERT DATA {{ GRAPH <{self.graph_uri}> {{ {triple} }} }}"
-            if self.graph_uri else
-            f"INSERT DATA {{ {triple} }}"
-        )
+
+        if self.graph_uri:
+            sparql = f"""
+            INSERT {{
+            GRAPH <{self.graph_uri}> {{ {triple} }}
+            }}
+            WHERE {{
+            FILTER NOT EXISTS {{
+                GRAPH <{self.graph_uri}> {{ {triple} }}
+            }}
+            }}
+            """
+        else:
+            sparql = f"""
+            INSERT {{ {triple} }}
+            WHERE {{
+            FILTER NOT EXISTS {{ {triple} }}
+            }}
+            """
+
         self._run_update(sparql)
+
 
     def delete(self, s: str, p: str, o: str) -> None:
         """
@@ -234,6 +258,16 @@ class AllegroGraph(TriplestoreBackend):
         if not query_type:
             msg = "[AllegroGraph] Could not detect SPARQL keyword."
             raise RuntimeError(msg)
+
+        lines = [line.strip() for line in sparql.strip().splitlines() if line.strip()]
+
+        query_type = ""
+        for line in lines:
+            upper = line.upper()
+            if upper.startswith("PREFIX ") or upper.startswith("BASE "):
+                continue
+            query_type = line.split(None, 1)[0].upper()
+            break
 
         # SELECT / ASK
         if query_type in {"SELECT", "ASK"}:

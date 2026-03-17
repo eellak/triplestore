@@ -35,6 +35,8 @@ jena =[
 
 oxigraph = ["pyoxigraph>=0.4.11"]
 
+qlever = ["requests>=2.32.4"]
+
 all = [
     "agraph-python>=104.3.0",
     "psutil>=7.0.0",
@@ -55,6 +57,7 @@ blazegraph   = "triplestore.backends.blazegraph:Blazegraph"
 graphdb      = "triplestore.backends.graphdb:GraphDB"
 jena         = "triplestore.backends.jena:Jena"
 oxigraph     = "triplestore.backends.oxigraph:Oxigraph"
+qlever     = "triplestore.backends.qlever:QLever"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

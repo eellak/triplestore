@@ -7,10 +7,11 @@ import shutil
 import tempfile
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import requests
 
-from triplestore.backends.jena_utils import add_graph_clause_if_needed, create_config_and_run_fuseki, first_keyword, stop_fuseki_server
+from triplestore.backends.jena_utils import add_graph_clause_if_needed, first_keyword, start_fuseki_server, stop_fuseki_server
 from triplestore.base import TriplestoreBackend
 from triplestore.utils import validate_config
 
@@ -50,7 +51,11 @@ class Jena(TriplestoreBackend):
         self.base_url = configuration["base_url"]
         self.dataset = configuration["name"]
 
-        create_config_and_run_fuseki(self.dataset)
+        parsed = urlparse(self.base_url)
+        host = parsed.hostname or "localhost"
+        port = parsed.port or 3030
+
+        start_fuseki_server(self.dataset, host, port)
         self.auth = configuration["auth"]
         self.graph_uri = configuration["graph"]
         if self.graph_uri:
@@ -66,7 +71,7 @@ class Jena(TriplestoreBackend):
         self.headers_query = {"Accept": "application/sparql-results+json"}
         self.headers_update = {"Content-Type": "application/sparql-update"}
 
-        self._ensure_dataset_exists()
+        #self._ensure_dataset_exists()
 
     def load(self, filename: str) -> None:
         """
@@ -80,6 +85,8 @@ class Jena(TriplestoreBackend):
 
         Raises
         ------
+        FileNotFoundError
+            If the file does not exist.
         RuntimeError
             If the server returns an error status during data loading.
         """
@@ -317,4 +324,12 @@ class Jena(TriplestoreBackend):
             raise RuntimeError(msg)
 
     def stop_server(self) -> bool:
+        """
+        Stop running local Fuseki server processes.
+
+        Returns
+        -------
+        bool
+            True if at least one matching process was found, otherwise False.
+        """
         return stop_fuseki_server()

@@ -1,9 +1,12 @@
 # Copyright (C) 2025 Maira Papadopoulou
 # SPDX-License-Identifier: Apache-2.0
 
+import csv
+import json
 import tempfile
 from pathlib import Path
 
+import pytest
 from triplestore import Triplestore
 
 # Sample data
@@ -11,6 +14,9 @@ SUBJECT = "http://example.org/s"
 PREDICATE = "http://example.org/p"
 OBJECT = "http://example.org/o"
 SPARQL_QUERY = "SELECT ?s ?p ?o WHERE { GRAPH <http://example.org/test> { ?s ?p ?o } }"
+
+TEST_FILES_DIR = Path(__file__).parent / "tests_files"
+TEST_FILES_DIR.mkdir(exist_ok=True)
 
 
 config = {
@@ -268,3 +274,516 @@ def test_select_star():
 
     # Ensure no duplicate rows are returned
     assert len(results) == len({tuple(sorted(r.items())) for r in results})
+
+
+def test_query_export_json():
+    """Test that query() exports SELECT results to a JSON file correctly."""
+    store = Triplestore("oxigraph", config=config)
+    store.clear()
+
+    store.add(SUBJECT, PREDICATE, OBJECT)
+
+    output_file = TEST_FILES_DIR / "oxigraph_results1"
+    results = store.query(SPARQL_QUERY, export=True, output_format="json", filename=str(output_file))
+
+    exported_path = TEST_FILES_DIR / "oxigraph_results1.json"
+
+    assert exported_path.exists()
+    assert isinstance(results, list)
+    assert len(results) == 1
+
+    data = json.loads(exported_path.read_text(encoding="utf-8"))
+    assert isinstance(data, list)
+    assert len(data) == 1
+    assert data == results
+
+    row = data[0]
+    assert row["s"] == SUBJECT
+    assert row["p"] == PREDICATE
+    assert row["o"] == OBJECT
+
+
+def test_query_export_csv():
+    """Test that query() exports SELECT results to a CSV file correctly."""
+    store = Triplestore("oxigraph", config=config)
+    store.clear()
+
+    store.add(SUBJECT, PREDICATE, OBJECT)
+
+    output_file = TEST_FILES_DIR / "oxigraph_results2"
+    results = store.query(SPARQL_QUERY, export=True, output_format="csv", filename=str(output_file))
+
+    exported_path = TEST_FILES_DIR / "oxigraph_results2.csv"
+
+    assert exported_path.exists()
+    assert isinstance(results, list)
+    assert len(results) == 1
+
+    with exported_path.open("r", encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        rows = list(reader)
+
+    assert len(rows) == 1
+    assert rows[0]["s"] == SUBJECT
+    assert rows[0]["p"] == PREDICATE
+    assert rows[0]["o"] == OBJECT
+
+
+def test_export_csv_with_custom_separator():
+    """Test that query() exports SELECT results to CSV using a custom separator."""
+    store = Triplestore("oxigraph", config=config)
+    store.clear()
+
+    store.add(SUBJECT, PREDICATE, OBJECT)
+
+    output_file = TEST_FILES_DIR / "custom_separator"
+    results = store.query(SPARQL_QUERY, export=True, output_format="csv", filename=str(output_file), separator=";")
+
+    exported_path = TEST_FILES_DIR / "custom_separator.csv"
+
+    assert exported_path.exists()
+    assert isinstance(results, list)
+    assert len(results) == 1
+
+    content = exported_path.read_text()
+    assert ";" in content
+
+    with exported_path.open("r", encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f, delimiter=";")
+        rows = list(reader)
+
+    assert len(rows) == 1
+    assert rows[0]["s"] == SUBJECT
+    assert rows[0]["p"] == PREDICATE
+    assert rows[0]["o"] == OBJECT
+
+
+def test_query_export_json_with_existing_extension():
+    """Test that query() respects an already-correct filename extension."""
+    store = Triplestore("oxigraph", config=config)
+    store.clear()
+
+    store.add(SUBJECT, PREDICATE, OBJECT)
+
+    output_file = TEST_FILES_DIR / "already_json.json"
+    store.query(SPARQL_QUERY, export=True, output_format="json", filename=str(output_file))
+
+    assert output_file.exists()
+    assert not (TEST_FILES_DIR / "already_json.json.json").exists()
+
+
+def test_query_export_replaces_wrong_extension():
+    """Test that query() replaces a wrong filename extension with the requested one."""
+    store = Triplestore("oxigraph", config=config)
+    store.clear()
+
+    store.add(SUBJECT, PREDICATE, OBJECT)
+
+    output_file = TEST_FILES_DIR / "results.txt"
+    store.query(SPARQL_QUERY, export=True, output_format="csv", filename=str(output_file))
+
+    assert not output_file.exists()
+    assert (TEST_FILES_DIR / "results.csv").exists()
+
+
+def test_query_export_empty_results_json():
+    """Test exporting an empty SELECT result set to JSON."""
+    store = Triplestore("oxigraph", config=config)
+    store.clear()
+
+    output_file = TEST_FILES_DIR / "empty_results"
+    results = store.query(
+        "SELECT ?s WHERE { <http://example.org/does-not-exist> ?p ?o }",
+        export=True,
+        output_format="json",
+        filename=str(output_file),
+    )
+
+    exported_path = TEST_FILES_DIR / "empty_results.json"
+
+    assert results == []
+    assert exported_path.exists()
+
+    data = json.loads(exported_path.read_text(encoding="utf-8"))
+    assert data == []
+
+
+def test_query_export_empty_results_csv():
+    """Test exporting an empty SELECT result set to CSV still creates a valid file."""
+    store = Triplestore("oxigraph", config=config)
+    store.clear()
+
+    output_file = TEST_FILES_DIR / "empty_results"
+    results = store.query(
+        "SELECT ?s WHERE { <http://example.org/does-not-exist> ?p ?o }",
+        export=True,
+        output_format="csv",
+        filename=str(output_file),
+    )
+
+    exported_path = TEST_FILES_DIR / "empty_results.csv"
+
+    assert results == []
+    assert exported_path.exists()
+
+    with exported_path.open("r", encoding="utf-8", newline="") as f:
+        content = f.read()
+
+    assert not content.strip()
+
+
+def test_query_rejects_non_select_query():
+    """Test that query() rejects non-SELECT SPARQL queries."""
+    store = Triplestore("oxigraph", config=config)
+    store.clear()
+
+    with pytest.raises(ValueError, match=r"Only SELECT queries are supported"):
+        store.query(f"ASK WHERE {{ GRAPH <{config['graph']}> {{ ?s ?p ?o }} }}")
+
+
+def test_query_rejects_unsupported_export_format():
+    """Test that query() rejects unsupported export formats for SELECT queries."""
+    store = Triplestore("oxigraph", config=config)
+    store.clear()
+
+    with pytest.raises(ValueError, match="Unsupported export format"):
+        store.query(SPARQL_QUERY, export=True, output_format="ttl", filename="bad_output")
+
+
+def test_query_no_export_does_not_create_file():
+    """Test that query() does not create any file when export=False."""
+    store = Triplestore("oxigraph", config=config)
+    store.clear()
+
+    store.add(SUBJECT, PREDICATE, OBJECT)
+
+    output_file = TEST_FILES_DIR / "should_not_exist.json"
+    results = store.query(SPARQL_QUERY, export=False, output_format="json", filename=str(output_file))
+
+    assert len(results) == 1
+    assert not output_file.exists()
+
+
+def test_query_accepts_prefixed_select_with_export():
+    """Test that query() correctly detects SELECT when PREFIX declarations precede it."""
+    store = Triplestore("oxigraph", config=config)
+    store.clear()
+
+    store.add(SUBJECT, PREDICATE, OBJECT)
+
+    sparql = f"""
+        PREFIX ex: <http://example.org/>
+        SELECT ?s ?p ?o
+        WHERE {{
+            GRAPH <{config["graph"]}> {{
+                ?s ?p ?o
+            }}
+        }}
+    """
+
+    output_file = TEST_FILES_DIR / "prefixed"
+    results = store.query(sparql, export=True, output_format="json", filename=str(output_file))
+
+    exported_path = TEST_FILES_DIR / "prefixed.json"
+
+    assert exported_path.exists()
+    assert len(results) == 1
+    assert results[0]["s"] == SUBJECT
+    assert results[0]["p"] == PREDICATE
+    assert results[0]["o"] == OBJECT
+
+
+def test_execute_export_select_json():
+    """Test that execute() exports SELECT results to JSON correctly."""
+    store = Triplestore("oxigraph", config=config)
+    store.clear()
+
+    graph = config["graph"]
+    store.execute(f"""
+        INSERT DATA {{
+            GRAPH <{graph}> {{
+                <{SUBJECT}> <{PREDICATE}> <{OBJECT}> .
+            }}
+        }}
+    """)
+
+    output_file = TEST_FILES_DIR / "execute_select_json"
+    sparql = f"""
+        SELECT ?s ?p ?o
+        WHERE {{
+            GRAPH <{graph}> {{
+                ?s ?p ?o
+            }}
+        }}
+    """
+
+    results = store.execute(sparql, export=True, output_format="json", filename=str(output_file))
+
+    exported_path = TEST_FILES_DIR / "execute_select_json.json"
+
+    assert exported_path.exists()
+    assert isinstance(results, list)
+    assert len(results) == 1
+
+    data = json.loads(exported_path.read_text(encoding="utf-8"))
+    assert data == results
+    assert data[0]["s"] == SUBJECT
+    assert data[0]["p"] == PREDICATE
+    assert data[0]["o"] == OBJECT
+
+
+def test_execute_export_select_csv():
+    """Test that execute() exports SELECT results to CSV correctly."""
+    store = Triplestore("oxigraph", config=config)
+    store.clear()
+
+    graph = config["graph"]
+    store.execute(f"""
+        INSERT DATA {{
+            GRAPH <{graph}> {{
+                <{SUBJECT}> <{PREDICATE}> <{OBJECT}> .
+            }}
+        }}
+    """)
+
+    output_file = TEST_FILES_DIR / "execute_select_csv"
+    sparql = f"""
+        SELECT ?s ?p ?o
+        WHERE {{
+            GRAPH <{graph}> {{
+                ?s ?p ?o
+            }}
+        }}
+    """
+
+    results = store.execute(sparql, export=True, output_format="csv", filename=str(output_file))
+
+    exported_path = TEST_FILES_DIR / "execute_select_csv.csv"
+
+    assert exported_path.exists()
+    assert isinstance(results, list)
+    assert len(results) == 1
+
+    with exported_path.open("r", encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        rows = list(reader)
+
+    assert len(rows) == 1
+    assert rows[0]["s"] == SUBJECT
+    assert rows[0]["p"] == PREDICATE
+    assert rows[0]["o"] == OBJECT
+
+
+def test_execute_export_ask_json():
+    """Test that execute() exports ASK results to JSON correctly."""
+    store = Triplestore("oxigraph", config=config)
+    store.clear()
+
+    graph = config["graph"]
+    store.execute(f"""
+        INSERT DATA {{
+            GRAPH <{graph}> {{
+                <{SUBJECT}> <{PREDICATE}> <{OBJECT}> .
+            }}
+        }}
+    """)
+
+    output_file = TEST_FILES_DIR / "execute_ask_json"
+    sparql = f"ASK WHERE {{ GRAPH <{graph}> {{ <{SUBJECT}> <{PREDICATE}> <{OBJECT}> }} }}"
+
+    result = store.execute(sparql, export=True, output_format="json", filename=str(output_file))
+
+    exported_path = TEST_FILES_DIR / "execute_ask_json.json"
+
+    assert exported_path.exists()
+    assert result is True
+
+    data = json.loads(exported_path.read_text(encoding="utf-8"))
+    assert data == {"boolean": True}
+
+
+def test_execute_export_ask_txt():
+    """Test that execute() exports ASK results to TXT correctly."""
+    store = Triplestore("oxigraph", config=config)
+    store.clear()
+
+    graph = config["graph"]
+    store.execute(f"""
+        INSERT DATA {{
+            GRAPH <{graph}> {{
+                <{SUBJECT}> <{PREDICATE}> <{OBJECT}> .
+            }}
+        }}
+    """)
+
+    output_file = TEST_FILES_DIR / "execute_ask_txt"
+    sparql = f"ASK WHERE {{ GRAPH <{graph}> {{ <{SUBJECT}> <{PREDICATE}> <{OBJECT}> }} }}"
+
+    result = store.execute(sparql, export=True, output_format="txt", filename=str(output_file))
+
+    exported_path = TEST_FILES_DIR / "execute_ask_txt.txt"
+
+    assert exported_path.exists()
+    assert result is True
+    assert exported_path.read_text(encoding="utf-8").strip() == "true"
+
+
+def test_execute_export_construct_ttl():
+    """Test that execute() exports CONSTRUCT results to Turtle correctly."""
+    store = Triplestore("oxigraph", config=config)
+    store.clear()
+
+    graph = config["graph"]
+    store.execute(f"""
+        INSERT DATA {{
+            GRAPH <{graph}> {{
+                <{SUBJECT}> <{PREDICATE}> <{OBJECT}> .
+            }}
+        }}
+    """)
+
+    output_file = TEST_FILES_DIR / "execute_construct"
+    sparql = f"""
+        CONSTRUCT {{ ?s ?p ?o }}
+        WHERE {{
+            GRAPH <{graph}> {{
+                ?s ?p ?o
+            }}
+        }}
+    """
+
+    result = store.execute(sparql, export=True, output_format="ttl", filename=str(output_file))
+
+    exported_path = TEST_FILES_DIR / "execute_construct.ttl"
+
+    assert exported_path.exists()
+    assert isinstance(result, str)
+
+    content = exported_path.read_text(encoding="utf-8")
+    assert content.splitlines() == result.splitlines()
+    assert SUBJECT in content
+    assert PREDICATE in content
+    assert OBJECT in content
+
+
+def test_execute_export_describe_ttl():
+    """Test that execute() exports DESCRIBE results to Turtle correctly."""
+    store = Triplestore("oxigraph", config=config)
+    store.clear()
+
+    graph = config["graph"]
+    store.execute(f"""
+        INSERT DATA {{
+            GRAPH <{graph}> {{
+                <{SUBJECT}> <{PREDICATE}> <{OBJECT}> .
+            }}
+        }}
+    """)
+
+    output_file = TEST_FILES_DIR / "execute_describe"
+    sparql = f"""
+        DESCRIBE <{SUBJECT}>
+        FROM <{graph}>
+    """
+
+    result = store.execute(sparql, export=True, output_format="ttl", filename=str(output_file))
+
+    exported_path = TEST_FILES_DIR / "execute_describe.ttl"
+
+    assert exported_path.exists()
+    assert isinstance(result, str)
+
+    content = exported_path.read_text(encoding="utf-8")
+    assert content.splitlines() == result.splitlines()
+    assert SUBJECT in content
+
+
+def test_execute_export_uses_default_format_for_ask():
+    """Test that execute() uses the default export format for ASK when output_format is omitted."""
+    store = Triplestore("oxigraph", config=config)
+    store.clear()
+
+    graph = config["graph"]
+    store.execute(f"""
+        INSERT DATA {{
+            GRAPH <{graph}> {{
+                <{SUBJECT}> <{PREDICATE}> <{OBJECT}> .
+            }}
+        }}
+    """)
+
+    output_file = TEST_FILES_DIR / "execute_ask_default"
+    sparql = f"ASK WHERE {{ GRAPH <{graph}> {{ <{SUBJECT}> <{PREDICATE}> <{OBJECT}> }} }}"
+
+    result = store.execute(sparql, export=True, filename=str(output_file))
+
+    exported_path = TEST_FILES_DIR / "execute_ask_default.json"
+
+    assert result is True
+    assert exported_path.exists()
+
+    data = json.loads(exported_path.read_text(encoding="utf-8"))
+    assert data == {"boolean": True}
+
+
+def test_execute_export_uses_default_format_for_construct():
+    """Test that execute() uses the default export format for CONSTRUCT when output_format is omitted."""
+    store = Triplestore("oxigraph", config=config)
+    store.clear()
+
+    graph = config["graph"]
+    store.execute(f"""
+        INSERT DATA {{
+            GRAPH <{graph}> {{
+                <{SUBJECT}> <{PREDICATE}> <{OBJECT}> .
+            }}
+        }}
+    """)
+
+    output_file = TEST_FILES_DIR / "execute_construct_default"
+    sparql = f"""
+        CONSTRUCT {{ ?s ?p ?o }}
+        WHERE {{
+            GRAPH <{graph}> {{
+                ?s ?p ?o
+            }}
+        }}
+    """
+
+    result = store.execute(sparql, export=True, filename=str(output_file))
+
+    exported_path = TEST_FILES_DIR / "execute_construct_default.ttl"
+
+    assert isinstance(result, str)
+    assert exported_path.exists()
+    assert exported_path.read_text(encoding="utf-8").splitlines() == result.splitlines()
+
+
+def test_execute_rejects_unsupported_export_format_for_ask():
+    """Test that execute() rejects unsupported export formats for ASK queries."""
+    store = Triplestore("oxigraph", config=config)
+    store.clear()
+
+    graph = config["graph"]
+    sparql = f"ASK WHERE {{ GRAPH <{graph}> {{ ?s ?p ?o }} }}"
+
+    with pytest.raises(ValueError, match="Unsupported export format"):
+        store.execute(sparql, export=True, output_format="csv", filename=str(TEST_FILES_DIR / "bad_ask"))
+
+
+def test_execute_rejects_export_for_update_operations():
+    """Test that execute() rejects export for SPARQL update operations."""
+    store = Triplestore("oxigraph", config=config)
+    store.clear()
+
+    graph = config["graph"]
+    sparql = f"""
+        INSERT DATA {{
+            GRAPH <{graph}> {{
+                <{SUBJECT}> <{PREDICATE}> <{OBJECT}> .
+            }}
+        }}
+    """
+
+    with pytest.raises(ValueError, match="Unsupported export format"):
+        store.execute(sparql, export=True, output_format="json", filename=str(TEST_FILES_DIR / "bad_update"))

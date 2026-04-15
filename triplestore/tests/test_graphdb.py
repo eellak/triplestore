@@ -27,6 +27,8 @@ SPARQL_QUERY = "SELECT ?s ?p ?o WHERE { GRAPH <http://example.org/test> { ?s ?p 
 TEST_FILES_DIR = Path(__file__).parent / "tests_files"
 TEST_FILES_DIR.mkdir(exist_ok=True)
 
+BULK_FILE = "data_20k_triples.ttl"
+
 
 def is_graphdb_available():
     try:
@@ -154,6 +156,75 @@ def test_load_from_turtle_file():
 
     bindings = [str(binding) for binding in results]
     assert any(SUBJECT in b and PREDICATE in b and OBJECT in b for b in bindings)
+
+
+def test_bulk_load_uses_instance_graph():
+    """Test that bulk_load() imports data into the graph configured on the backend instance."""
+    store = Triplestore("graphdb", config=config)
+    store.clear()
+
+    try:
+        store.bulk_load(BULK_FILE)
+    except RuntimeError as e:
+        pytest.skip(
+            f"Skipping bulk_load test: server file '{BULK_FILE}' is not available "
+            f"or import failed ({e})."
+        )
+
+    deadline = time.time() + 600
+
+    while time.time() < deadline:
+        results = store.query(SPARQL_QUERY)
+        if results:
+            assert isinstance(results, list)
+            assert len(results) > 0
+            return
+        time.sleep(1.0)
+
+    pytest.fail(
+        f"[GraphDB] bulk_load() did not populate graph <{config['graph']}> "
+        f"within 600 seconds."
+    )
+
+
+def test_bulk_load_target_graph_overrides_instance_graph():
+    """Test that bulk_load() uses target_graph instead of the configured instance graph."""
+    store = Triplestore("graphdb", config=config)
+    store.clear()
+
+    override_graph = "http://example.org/bulk-override"
+    store.execute(f"CLEAR GRAPH <{override_graph}>")
+
+    try:
+        store.bulk_load(BULK_FILE, target_graph=override_graph)
+    except RuntimeError as e:
+        pytest.skip(
+            f"Skipping bulk_load override test: server file '{BULK_FILE}' is not available "
+            f"or import failed ({e})."
+        )
+
+    deadline = time.time() + 600
+
+    while time.time() < deadline:
+        results = store.query(
+            f"SELECT ?s ?p ?o WHERE {{ GRAPH <{override_graph}> {{ ?s ?p ?o }} }} LIMIT 1"
+        )
+        if results:
+            assert isinstance(results, list)
+            assert len(results) > 0
+            break
+        time.sleep(1.0)
+    else:
+        pytest.fail(
+            f"[GraphDB] bulk_load() did not populate override graph <{override_graph}> "
+            f"within 600 seconds."
+        )
+
+    # Ensure nothing leaked into default graph
+    default_graph_results = store.query(SPARQL_QUERY)
+    assert default_graph_results == []
+
+    store.execute(f"CLEAR GRAPH <{override_graph}>")
 
 
 def test_clear():
@@ -380,6 +451,7 @@ def test_export_csv_with_custom_separator():
     assert rows[0]["s"] == SUBJECT
     assert rows[0]["p"] == PREDICATE
     assert rows[0]["o"] == OBJECT
+
 
 def test_query_export_json_with_existing_extension():
     """Test that query() respects an already-correct filename extension."""

@@ -103,6 +103,52 @@ class GraphDB(TriplestoreBackend):
             msg = f"[GraphDB] Load failed with status {response.status_code}:\n{response.text}"
             raise RuntimeError(msg)
 
+    def bulk_load(self, filenames: str | list[str], *, target_graph: str | None = None) -> None:
+        """
+        Bulk-load one or more RDF files that already exist on the GraphDB server.
+
+        Parameters
+        ----------
+        filenames : str or list[str]
+            Server-side file path(s), relative to the GraphDB import directory.
+        target_graph : str, optional
+            Named graph URI for this import. If omitted, the graph configured for this backend
+            instance is used. If neither is set, GraphDB uses its default import behavior.
+
+        Raises
+        ------
+        ValueError
+            If no server-side file paths are provided.
+        RuntimeError
+            If the bulk-load request fails or the server returns a non-success status.
+        """
+        file_names = [filenames] if isinstance(filenames, str) else [name for name in filenames if name]
+
+        if not file_names:
+            msg = (
+                "[GraphDB] bulk_load() requires at least one non-empty server-side file path. "
+                "Ensure that the file exists in the GraphDB import directory."
+            )
+            raise ValueError(msg)
+
+        payload = {"fileNames": file_names}
+
+        graph = target_graph if target_graph is not None else self.graph_uri
+        if graph:
+            payload["importSettings"] = {"context": graph}
+
+        import_url = f"{self.base_url}/rest/repositories/{self.repository}/import/server"
+
+        try:
+            response = requests.post(import_url, json=payload, auth=self.auth, timeout=None)
+        except requests.RequestException as e:
+            msg = f"[GraphDB] Bulk load request failed: {e}"
+            raise RuntimeError(msg) from e
+
+        if response.status_code not in {200, 201, 202, 204}:
+            msg = f"[GraphDB] Bulk load failed with status {response.status_code}:\n{response.text}"
+            raise RuntimeError(msg)
+
     def add(self, s: str, p: str, o: str) -> None:
         """
         Add a triple to the GraphDB store.

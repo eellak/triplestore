@@ -14,6 +14,7 @@ from triplestore.utils import (
     export_ask_result,
     export_rdf_result,
     export_select_results,
+    get_rdf_content_type,
     get_sparql_query_type,
     resolve_export_format,
     validate_config,
@@ -75,11 +76,15 @@ class QLever(TriplestoreBackend):
 
     def load(self, filename: str) -> None:
         """
-        Load RDF triples from a Turtle (.ttl) file into QLever.
+        Load RDF triples from a supported RDF file into QLever.
+
+        Supported formats:
+        - .ttl: Turtle
+        - .nt: N-Triples
 
         Parameters:
         filename : str
-            Path to the Turtle (.ttl) file to be loaded.
+            Path to the RDF file to load (.ttl or .nt).
 
         Raises
         ------
@@ -92,6 +97,9 @@ class QLever(TriplestoreBackend):
             msg = f"[QLever] File not found: {filename}"
             raise FileNotFoundError(msg)
 
+        content_type = get_rdf_content_type(filename, backend_name="QLever")
+        headers = {"Content-Type": content_type}
+
         rdf_data = Path(filename).read_bytes()
         params = {}
 
@@ -101,7 +109,7 @@ class QLever(TriplestoreBackend):
         if self.access_token:
             params["access-token"] = self.access_token
 
-        response = requests.post(self.update_url, headers=self.headers_load, data=rdf_data, params=params, timeout=None)
+        response = requests.post(self.update_url, headers=headers, data=rdf_data, params=params, timeout=None)
         if response.status_code not in {200, 204, 201}:
             msg = f"[QLever] Load failed with status: {response.status_code}\n{response.text}"
             raise RuntimeError(msg)

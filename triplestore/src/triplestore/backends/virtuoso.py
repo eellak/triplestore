@@ -15,6 +15,7 @@ from triplestore.utils import (
     export_ask_result,
     export_rdf_result,
     export_select_results,
+    get_rdf_content_type,
     get_sparql_query_type,
     resolve_export_format,
     validate_config,
@@ -118,11 +119,15 @@ class Virtuoso(TriplestoreBackend):
 
     def load(self, filename: str) -> None:
         """
-        Load RDF triples from a Turtle (.ttl) file into a Virtuoso named graph.
+        Load RDF triples from a supported RDF file into a Virtuoso named graph.
+
+        Supported formats:
+        - .ttl: Turtle
+        - .nt: N-Triples
 
         Parameters:
         filename : str
-            Path to the Turtle (.ttl) file to be loaded.
+            Path to the RDF file to load (.ttl or .nt).
 
         Raises
         ------
@@ -134,10 +139,13 @@ class Virtuoso(TriplestoreBackend):
         if not Path(filename).exists():
             msg = f"[Virtuoso] File not found: {filename}"
             raise FileNotFoundError(msg)
+        
+        content_type = get_rdf_content_type(filename, backend_name="Virtuoso")
+        headers = {"Content-Type": content_type}
 
         rdf_data = Path(filename).read_bytes()
         params = {"graph-uri": self.graph_uri} if self.graph_uri else {}
-        response = requests.post(self.graph_store_url, headers=self.headers_load, params=params, data=rdf_data, auth=self.auth, timeout=None)
+        response = requests.post(self.graph_store_url, headers=headers, params=params, data=rdf_data, auth=self.auth, timeout=None)
 
         if response.status_code not in {200, 201, 204}:
             msg = f"[Virtuoso] Load failed with status {response.status_code}:\n{response.text}"

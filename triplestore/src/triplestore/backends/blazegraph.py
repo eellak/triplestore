@@ -12,6 +12,7 @@ from triplestore.utils import (
     export_ask_result,
     export_rdf_result,
     export_select_results,
+    get_rdf_content_type,
     get_sparql_query_type,
     resolve_export_format,
     validate_config,
@@ -67,11 +68,15 @@ class Blazegraph(TriplestoreBackend):
 
     def load(self, filename: str) -> None:
         """
-        Load RDF triples from a Turtle (.ttl) file into Blazegraph.
+        Load RDF triples from a supported RDF file into Blazegraph.
+
+        Supported formats:
+        - .ttl: Turtle
+        - .nt: N-Triples
 
         Parameters:
         filename : str
-            Path to the Turtle file.
+            Path to the RDF file to load (.ttl or .nt).
 
         Raises
         ------
@@ -83,10 +88,13 @@ class Blazegraph(TriplestoreBackend):
         if not Path(filename).exists():
             msg = f"[Blazegraph] File not found: {filename}"
             raise FileNotFoundError(msg)
+        
+        content_type = get_rdf_content_type(filename, backend_name="Blazegraph")
+        headers = {"Content-Type": content_type}
 
         data = Path(filename).read_bytes()
         params = {"context-uri": self.graph_uri} if self.graph_uri else {}
-        response = requests.post(self.update_url, headers=self.headers_load, data=data, params=params, timeout=None)
+        response = requests.post(self.update_url, headers=headers, data=data, params=params, timeout=None)
         if response.status_code not in {200, 204, 201}:
             msg = f"[Blazegraph] Load failed: {response.status_code}\n{response.text}"
             raise RuntimeError(msg)

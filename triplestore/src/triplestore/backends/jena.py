@@ -17,6 +17,7 @@ from triplestore.utils import (
     export_ask_result,
     export_rdf_result,
     export_select_results,
+    get_rdf_content_type,
     get_sparql_query_type,
     resolve_export_format,
     validate_config,
@@ -83,13 +84,13 @@ class Jena(TriplestoreBackend):
 
     def load(self, filename: str) -> None:
         """
-        Load RDF triples from a Turtle (.ttl) file into the Jena dataset.
+        Load RDF triples from a supported RDF file into the Jena dataset.
 
         If a named graph URI is provided in the configuration, data is loaded into that graph.
 
         Parameters:
         filename : str
-            Path to the Turtle (.ttl) file to be loaded.
+            Path to the RDF file to load (.ttl or .nt).
 
         Raises
         ------
@@ -102,10 +103,12 @@ class Jena(TriplestoreBackend):
         if not path.exists():
             msg = f"[APACHE JENA] File not found: {filename}"
             raise FileNotFoundError(msg)
+        
+        content_type = get_rdf_content_type(filename, backend_name="APACHE JENA")
 
         params = {"graph": self._effective_graph}
 
-        tmp_gz = tempfile.NamedTemporaryFile(prefix="ttl-", suffix=".ttl.gz", delete=False)
+        tmp_gz = tempfile.NamedTemporaryFile(prefix="rdf-", suffix=f"{path.suffix}.gz", delete=False)
         tmp_gz_path = Path(tmp_gz.name)
         try:
             with path.open("rb") as fin, gzip.open(tmp_gz, "wb", compresslevel=9) as fout:
@@ -113,7 +116,7 @@ class Jena(TriplestoreBackend):
             tmp_gz.close()
 
             headers = {
-                "Content-Type": "text/turtle",
+                "Content-Type": content_type,
                 "Content-Encoding": "gzip",
                 "Connection": "keep-alive",
             }

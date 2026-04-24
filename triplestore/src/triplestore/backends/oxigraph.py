@@ -13,11 +13,18 @@ from triplestore.utils import (
     export_ask_result,
     export_rdf_result,
     export_select_results,
+    get_rdf_content_type,
     get_sparql_query_type,
     resolve_export_format,
     validate_config,
     validate_rdf_term,
 )
+
+
+OXIGRAPH_RDF_FORMATS = {
+    "text/turtle": RdfFormat.TURTLE,
+    "application/n-triples": RdfFormat.N_TRIPLES,
+}
 
 
 class Oxigraph(TriplestoreBackend):
@@ -53,11 +60,16 @@ class Oxigraph(TriplestoreBackend):
 
     def load(self, filename: str) -> None:
         """
-        Load RDF triples from a Turtle (.ttl) file into the Oxigraph store.
+        Load RDF triples from a supported RDF file into the Oxigraph store.
+
+        Supported formats:
+        - .ttl: Turtle
+        - .nt: N-Triples
 
         Parameters:
         filename : str
-            Path to the Turtle (.ttl) file to be loaded.
+            Path to the RDF file to load (.ttl or .nt).
+
 
         Raises
         ------
@@ -68,12 +80,15 @@ class Oxigraph(TriplestoreBackend):
         if not path.exists():
             msg = f"[Oxigraph] File not found: {filename}"
             raise FileNotFoundError(msg)
+        
+        content_type = get_rdf_content_type(filename, backend_name="Oxigraph")
+        rdf_format = OXIGRAPH_RDF_FORMATS[content_type]
 
         with Path(filename).open("rb") as f:
             if self.graph_uri:
-                self.store.bulk_load(f, RdfFormat.TURTLE, to_graph=NamedNode(self.graph_uri))
+                self.store.bulk_load(f, rdf_format, to_graph=NamedNode(self.graph_uri))
             else:
-                self.store.bulk_load(f, RdfFormat.TURTLE, to_graph=DefaultGraph())
+                self.store.bulk_load(f, rdf_format, to_graph=DefaultGraph())
         self.store.optimize()
 
     def add(self, subject: Any, predicate: Any, obj: Any) -> None:

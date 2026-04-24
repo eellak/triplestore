@@ -16,6 +16,7 @@ from triplestore.utils import (
     export_ask_result,
     export_rdf_result,
     export_select_results,
+    get_rdf_content_type,
     get_sparql_query_type,
     resolve_export_format,
     validate_config,
@@ -78,11 +79,15 @@ class GraphDB(TriplestoreBackend):
 
     def load(self, filename: str) -> None:
         """
-        Load RDF triples from a Turtle (.ttl) file into the GraphDB repository.
+        Load RDF triples from a supported RDF file into the GraphDB repository.
+
+        Supported formats:
+        - .ttl: Turtle
+        - .nt: N-Triples
 
         Parameters:
         filename : str
-            Path to the Turtle (.ttl) file to be loaded.
+            Path to the RDF file to load (.ttl or .nt).
 
         Raises
         ------
@@ -95,13 +100,16 @@ class GraphDB(TriplestoreBackend):
             msg = f"[GraphDB] File not found: {filename}"
             raise FileNotFoundError(msg)
 
+        content_type = get_rdf_content_type(filename, backend_name="GraphDB")
+        headers = {"Content-Type": content_type}
+
         self._ensure_repository_exists()
 
         rdf_data = Path(filename).read_bytes()
         params = {}
         if self.graph_uri:
             params["context"] = f"<{self.graph_uri}>"
-        response = requests.post(self.update_url, headers=self.headers_load, params=params, data=rdf_data, auth=self.auth, timeout=None)
+        response = requests.post(self.update_url, headers=headers, params=params, data=rdf_data, auth=self.auth, timeout=None)
 
         if response.status_code not in {200, 204, 201}:
             msg = f"[GraphDB] Load failed with status {response.status_code}:\n{response.text}"

@@ -38,6 +38,11 @@ SPARQL_ALLOWED_EXPORT_FORMATS = {
     "DESCRIBE": {"ttl"},
 }
 
+RDF_CONTENT_TYPES = {
+    ".ttl": "text/turtle",
+    ".nt": "application/n-triples",
+}
+
 
 def detect_host_url(port: int, path: str = "", fallback: str | None = None) -> str:
     """
@@ -606,3 +611,41 @@ def _escape_literal(value: str) -> str:
         .replace("\r", "\\r")
         .replace("\t", "\\t")
     )
+
+
+def get_rdf_content_type(filename: str, backend_name: str = "backend") -> str:
+    """
+    Determine the appropriate HTTP Content-Type header for an RDF file.
+
+    Supported formats:
+    - .ttl -> text/turtle
+    - .nt  -> application/n-triples
+
+    Parameters
+    ----------
+    filename : str
+        Path to the RDF file.
+    backend_name : str, default="backend"
+        Backend name used in error messages.
+
+    Returns
+    -------
+    str
+        The corresponding Content-Type for the RDF file.
+
+    Raises
+    ------
+    ValueError
+        If the file extension is not supported.
+    """
+    suffix = Path(filename).suffix.lower()
+
+    try:
+        return RDF_CONTENT_TYPES[suffix]
+    except KeyError as exc:
+        supported = ", ".join(sorted(RDF_CONTENT_TYPES))
+        msg = (
+            f"[{backend_name}] Unsupported RDF file format: '{suffix}'. "
+            f"Supported formats: {supported}"
+        )
+        raise ValueError(msg) from exc

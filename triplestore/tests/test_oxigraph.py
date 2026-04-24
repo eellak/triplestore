@@ -267,6 +267,41 @@ def test_load_from_turtle_file():
     assert any(SUBJECT in b and PREDICATE in b and OBJECT in b for b in bindings)
 
 
+def test_load_from_ntriples_file():
+    """Test loading triples from a .nt file into the store."""
+    ntriples_data = "<http://example.org/s> <http://example.org/p> <http://example.org/o> ."
+
+    with tempfile.NamedTemporaryFile(delete=False, mode="w", suffix=".nt", encoding="utf-8") as f:
+        f.write(ntriples_data)
+        tmp_path = f.name
+
+    store = Triplestore("oxigraph", config=config)
+    store.clear()
+    store.load(tmp_path)
+
+    results = store.query(SPARQL_QUERY)
+    Path(tmp_path).unlink()
+
+    bindings = [str(binding) for binding in results]
+    assert any(SUBJECT in b and PREDICATE in b and OBJECT in b for b in bindings)
+
+
+def test_load_rejects_unsupported_file_format():
+    """Test that load() rejects unsupported RDF file formats."""
+    invalid_data = "this is not rdf"
+
+    with tempfile.NamedTemporaryFile(delete=False, mode="w", suffix=".txt", encoding="utf-8") as f:
+        f.write(invalid_data)
+        tmp_path = f.name
+
+    store = Triplestore("oxigraph", config=config)
+
+    with pytest.raises(ValueError, match="Unsupported RDF file format"):
+        store.load(tmp_path)
+
+    Path(tmp_path).unlink()
+
+
 def test_clear():
     """Test that clear() removes all triples from the store."""
     store = Triplestore("oxigraph", config=config)

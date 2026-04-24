@@ -15,6 +15,7 @@ from triplestore.utils import (
     export_ask_result,
     export_rdf_result,
     export_select_results,
+    get_rdf_content_type,
     get_sparql_query_type,
     resolve_export_format,
     validate_config,
@@ -120,10 +121,14 @@ class AllegroGraph(TriplestoreBackend):
         """
         Load RDF data into the repository using the Graph Store Protocol.
 
+        Supported formats:
+        - .ttl: Turtle
+        - .nt: N-Triples
+
         Parameters
         ----------
         filename : str
-            Path to the RDF file to load (e.g. Turtle).
+            Path to the RDF file to load (.ttl or .nt).
 
         Raises
         ------
@@ -137,12 +142,15 @@ class AllegroGraph(TriplestoreBackend):
             msg = f"[AllegroGraph] File not found: {filename}"
             raise FileNotFoundError(msg)
 
+        content_type = get_rdf_content_type(filename, backend_name="AllegroGraph")
+        headers = {"Content-Type": content_type}
+
         params: dict[str, str] = {}
         if self.graph_uri:
             params["context"] = f"<{self.graph_uri}>"
 
         with path.open("rb") as f:
-            response = requests.post(self.load_url, params=params, data=f, headers=self.headers_load, auth=self.auth, timeout=None)
+            response = requests.post(self.load_url, params=params, data=f, headers=headers, auth=self.auth, timeout=None)
 
         if response.status_code not in {200, 201, 204}:
             msg = f"[AllegroGraph] GSP load failed with status {response.status_code}:\n{response.text}"

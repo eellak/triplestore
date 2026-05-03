@@ -7,12 +7,22 @@ import shutil
 import tempfile
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import requests
 
-from triplestore.backends.jena_utils import add_graph_clause_if_needed, create_config_and_run_fuseki, first_keyword, stop_fuseki_server
+from triplestore.backends.jena_utils import add_graph_clause_if_needed, start_fuseki_server, stop_fuseki_server
 from triplestore.base import TriplestoreBackend
-from triplestore.utils import validate_config
+from triplestore.utils import (
+    export_ask_result,
+    export_rdf_result,
+    export_select_results,
+    get_rdf_content_type,
+    get_sparql_query_type,
+    resolve_export_format,
+    validate_config,
+    validate_rdf_term,
+)
 
 
 class Jena(TriplestoreBackend):
@@ -50,7 +60,11 @@ class Jena(TriplestoreBackend):
         self.base_url = configuration["base_url"]
         self.dataset = configuration["name"]
 
-        create_config_and_run_fuseki(self.dataset)
+        parsed = urlparse(self.base_url)
+        host = parsed.hostname or "localhost"
+        port = parsed.port or 3030
+
+        start_fuseki_server(self.dataset, host, port)
         self.auth = configuration["auth"]
         self.graph_uri = configuration["graph"]
         if self.graph_uri:
@@ -66,20 +80,22 @@ class Jena(TriplestoreBackend):
         self.headers_query = {"Accept": "application/sparql-results+json"}
         self.headers_update = {"Content-Type": "application/sparql-update"}
 
-        self._ensure_dataset_exists()
+        #self._ensure_dataset_exists()
 
     def load(self, filename: str) -> None:
         """
-        Load RDF triples from a Turtle (.ttl) file into the Jena dataset.
+        Load RDF triples from a supported RDF file into the Jena dataset.
 
         If a named graph URI is provided in the configuration, data is loaded into that graph.
 
         Parameters:
         filename : str
-            Path to the Turtle (.ttl) file to be loaded.
+            Path to the RDF file to load (.ttl or .nt).
 
         Raises
         ------
+        FileNotFoundError
+            If the file does not exist.
         RuntimeError
             If the server returns an error status during data loading.
         """
@@ -87,10 +103,12 @@ class Jena(TriplestoreBackend):
         if not path.exists():
             msg = f"[APACHE JENA] File not found: {filename}"
             raise FileNotFoundError(msg)
+        
+        content_type = get_rdf_content_type(filename, backend_name="APACHE JENA")
 
         params = {"graph": self._effective_graph}
 
-        tmp_gz = tempfile.NamedTemporaryFile(prefix="ttl-", suffix=".ttl.gz", delete=False)
+        tmp_gz = tempfile.NamedTemporaryFile(prefix="rdf-", suffix=f"{path.suffix}.gz", delete=False)
         tmp_gz_path = Path(tmp_gz.name)
         try:
             with path.open("rb") as fin, gzip.open(tmp_gz, "wb", compresslevel=9) as fout:
@@ -98,7 +116,7 @@ class Jena(TriplestoreBackend):
             tmp_gz.close()
 
             headers = {
-                "Content-Type": "text/turtle",
+                "Content-Type": content_type,
                 "Content-Encoding": "gzip",
                 "Connection": "keep-alive",
             }
@@ -115,47 +133,107 @@ class Jena(TriplestoreBackend):
             except Exception:
                 pass
 
-    def add(self, s: str, p: str, o: str) -> None:
+    def add(self, s: Any, p: Any, o: Any) -> None:
         """
         Add a triple to the Jena store.
 
-        Uses the named graph if specified in the config.
+        Parameters:
+        s : Any
+            The subject value of the triple. Must serialize to an RDF IRI or blank node.
+        p : Any
+            The predicate value of the triple. Must serialize to an RDF IRI.
+        o : Any
+            The object value of the triple. May serialize to an RDF IRI, blank node, or literal.
         """
-        triple = f"<{s}> <{p}> <{o}> ."
+        s_term = validate_rdf_term(s, "subject", "APACHE JENA")
+        p_term = validate_rdf_term(p, "predicate", "APACHE JENA")
+        o_term = validate_rdf_term(o, "object", "APACHE JENA")
+
+        triple = f"{s_term} {p_term} {o_term} ."
         sparql = (
             f"INSERT DATA {{ GRAPH <{self._effective_graph}> {{ {triple} }} }}"
         )
         self._run_update(sparql)
 
-    def delete(self, s: str, p: str, o: str) -> None:
+    def delete(self, s: Any, p: Any, o: Any) -> None:
         """
         Delete a triple from the Jena store.
 
-        Uses the named graph if specified in the config.
+        s : Any
+            The subject value of the triple. Must serialize to an RDF IRI or blank node.
+        p : Any
+            The predicate value of the triple. Must serialize to an RDF IRI.
+        o : Any
+            The object value of the triple. May serialize to an RDF IRI, blank node, or literal.
+
+        Raises
+        ------
+        ValueError
+            If a blank node is provided as the subject.
         """
-        triple = f"<{s}> <{p}> <{o}> ."
+        s_term = validate_rdf_term(s, "subject", "APACHE JENA")
+        p_term = validate_rdf_term(p, "predicate", "APACHE JENA")
+        o_term = validate_rdf_term(o, "object", "APACHE JENA")
+
+        if isinstance(s, str) and s.startswith("_:"):
+            msg = (
+                "[APACHE JENA] Cannot delete triples using a blank node as subject.\n\n"
+                "Blank node identifiers (e.g. '_:b1') are local to a single SPARQL query "
+                "or update and do not represent stable, reusable identifiers.\n"
+                "Recommended alternatives:\n"
+                " - Use a persistent IRI instead of a blank node if you need to delete the triple later.\n"
+                " - Or delete using a pattern-based query (e.g. DELETE WHERE) that matches the triple.\n\n"
+            )
+            raise ValueError(msg)
+
+        triple = f"{s_term} {p_term} {o_term} ."
         sparql = (
             f"DELETE DATA {{ GRAPH <{self._effective_graph}> {{ {triple} }} }}"
         )
         self._run_update(sparql)
 
-    def query(self, sparql: str) -> list[dict[str, str]]:
+    def query(self, sparql: str, *, export: bool = False, output_format: str = "json", filename: str | None = None, separator: str = ",") -> list[dict[str, str]]:
         """
-        Execute a SPARQL query against the Jena dataset.
+        Execute a SPARQL SELECT query against the Jena dataset.
 
-        Parameters:
+        Parameters
+        ----------
         sparql : str
             The SPARQL query string.
+        export : bool, optional
+            If True, also save the query results to a local file.
+        output_format : str, optional
+            Export format for saved results. Supported: 'json', 'csv'.
+        filename : str, optional
+            Output filename for exported results. The file extension is determined automatically from the requested export format.
+        separator : str, optional
+            Column separator to use when exporting CSV files. Defaults to ",".
 
-        Returns:
-        list of dict
+        Returns
+        -------
+        list[dict[str, str]]
             The list of query result bindings.
 
         Raises
         ------
+        ValueError
+            If query() is called with a non-SELECT query or with an unsupported export format.
         RuntimeError
             If the query fails or the server returns an error response.
         """
+        query_type = get_sparql_query_type(sparql)
+
+        if query_type != "SELECT":
+            msg = (
+                f"[APACHE JENA] Unsupported query type '{query_type}' for query(). "
+                "Only SELECT queries are supported. "
+                "Use execute() for UPDATE queries or other query forms."
+            )
+            raise ValueError(msg)
+
+        if export:
+            chosen_format = resolve_export_format(query_type, export=export, output_format=output_format, backend_name="APACHE JENA")
+
         final_query = (
             add_graph_clause_if_needed(sparql, self._effective_graph)
             if getattr(self, "_effective_graph", None) == "urn:app:default"
@@ -170,23 +248,36 @@ class Jena(TriplestoreBackend):
 
         data = response.json()
         bindings = data.get("results", {}).get("bindings", [])
-        return [
-            {k: v["value"] for k, v in row.items()}
-            for row in bindings
-        ]
+        results = [{k: v["value"] for k, v in row.items()} for row in bindings]
 
-    def execute(self, sparql: str) -> Any:
+        if export:
+            export_select_results(results, output_format=chosen_format, filename=filename, separator=separator, backend_name="APACHE JENA")
+
+        return results
+
+    def execute(self, sparql: str, *, export: bool = False, output_format: str | None = None, filename: str | None = None, separator: str = ",") -> Any:
         """
         Execute any SPARQL query (SELECT, ASK, CONSTRUCT, DESCRIBE, UPDATE).
 
-        Parameters:
+        Parameters
+        ----------
         sparql : str
             The SPARQL query or update string.
+        export : bool, optional
+            If True, also save the query result to a local file.
+        output_format : str, optional
+            Export format for saved results. If omitted and export=True, a default format is chosen based on the query type.
+        filename : str, optional
+            Output filename for exported results. The file extension is determined automatically from the requested export format.
+        separator : str, optional
+            Column separator to use when exporting CSV files. Defaults to ",".
 
-        Returns:
+        Returns
+        -------
         Any
-            - list of dict for SELECT/ASK
-            - str (raw text) or parsed JSON for CONSTRUCT/DESCRIBE
+            - list of dict for SELECT
+            - bool for ASK
+            - str (Turtle RDF) for CONSTRUCT/DESCRIBE
             - None for UPDATE operations
 
         Raises
@@ -194,46 +285,57 @@ class Jena(TriplestoreBackend):
         RuntimeError
             If the server responds with an error status.
         """
-        kw = first_keyword(sparql)
-        if not kw:
-            msg = "[APACHE JENA] Could not detect SPARQL keyword."
-            raise RuntimeError(msg)
+        query_type = get_sparql_query_type(sparql)
+        chosen_format = resolve_export_format(query_type, export=export, output_format=output_format, backend_name="APACHE JENA")
 
-        if kw in {"SELECT", "ASK", "CONSTRUCT", "DESCRIBE"} and getattr(self, "_effective_graph", None) == "urn:app:default":
+        if query_type in {"SELECT", "ASK", "CONSTRUCT", "DESCRIBE"} and getattr(self, "_effective_graph", None) == "urn:app:default":
             final_query = add_graph_clause_if_needed(sparql, self._effective_graph)
         else:
             final_query = sparql
 
         # SELECT / ASK
-        if kw in {"SELECT", "ASK"}:
+        if query_type in {"SELECT", "ASK"}:
             response = requests.post(self.query_url, headers=self.headers_query, data={"query": final_query}, auth=self.auth, timeout=None)
+
             if response.status_code != 200:
                 msg = f"[APACHE JENA] Query failed {response.status_code}:\n{response.text}"
                 raise RuntimeError(msg)
+
             data = response.json()
-            if kw == "ASK":
-                return bool(data.get("boolean", False))
+
+            if query_type == "ASK":
+                result = bool(data.get("boolean", False))
+                if export:
+                    export_ask_result(result, output_format=chosen_format, filename=filename, backend_name="APACHE JENA")
+                return result
 
             bindings = data.get("results", {}).get("bindings", [])
-            return [{k: v["value"] for k, v in row.items()} for row in bindings]
+            results = [{k: v["value"] for k, v in row.items()} for row in bindings]
+            if export:
+                export_select_results(results, output_format=chosen_format, filename=filename, separator=separator, backend_name="APACHE JENA")
 
-        #  CONSTRUCT / DESCRIBE (graph queries → RDF)
-        if kw in {"CONSTRUCT", "DESCRIBE"}:
+            return results
+
+        # CONSTRUCT / DESCRIBE
+        if query_type in {"CONSTRUCT", "DESCRIBE"}:
             response = requests.post(self.query_url, headers={"Accept": "text/turtle"}, data={"query": final_query}, auth=self.auth, timeout=None)
+
             if response.status_code != 200:
                 msg = f"[APACHE JENA] Query failed {response.status_code}:\n{response.text}"
                 raise RuntimeError(msg)
-            return response.text
 
-        # UPDATE family (INSERT, DELETE, CLEAR, LOAD, CREATE, DROP, MOVE, COPY, ADD, MODIFY, WITH)
-        if kw in {"WITH", "INSERT", "DELETE", "LOAD", "CLEAR", "CREATE", "DROP", "MOVE", "COPY", "ADD", "MODIFY"}:
-            response = requests.post(self.update_url, headers=self.headers_update, data=sparql, auth=self.auth, timeout=None)
-            if response.status_code not in {200, 204}:
-                msg = f"[APACHE JENA] Update failed {response.status_code}:\n{response.text}"
-                raise RuntimeError(msg)
+            rdf_text = response.text
+            if export:
+                export_rdf_result(rdf_text, output_format=chosen_format, filename=filename, backend_name="APACHE JENA")
+
+            return rdf_text
+
+        # UPDATE family
+        if query_type in {"WITH", "INSERT", "DELETE", "LOAD", "CLEAR", "CREATE", "DROP", "MOVE", "COPY", "ADD", "MODIFY"}:
+            self._run_update(sparql)
             return None
 
-        msg = f"[APACHE JENA] Unsupported SPARQL keyword: {kw}"
+        msg = f"[APACHE JENA] Unsupported SPARQL keyword: {query_type}"
         raise RuntimeError(msg)
 
     def clear(self) -> None:
@@ -317,4 +419,12 @@ class Jena(TriplestoreBackend):
             raise RuntimeError(msg)
 
     def stop_server(self) -> bool:
+        """
+        Stop running local Fuseki server processes.
+
+        Returns
+        -------
+        bool
+            True if at least one matching process was found, otherwise False.
+        """
         return stop_fuseki_server()

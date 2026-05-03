@@ -18,6 +18,9 @@ EXTRA_HINT = {
     "graphdb": "graphdb",
     "jena": "jena",
     "oxigraph": "oxigraph",
+    "qlever": "qlever",
+    "rdf4j": "rdf4j",
+    "virtuoso": "virtuoso",
 }
 
 

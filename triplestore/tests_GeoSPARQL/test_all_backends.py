@@ -8,12 +8,10 @@ import pytest
 
 def main() -> int:
     files = [
-        "triplestore/tests/test_oxigraph.py",
-        "triplestore/tests/test_jena.py",
-        "triplestore/tests/test_graphdb.py",
-        "triplestore/tests/test_blazegraph.py",
-        "triplestore/tests/test_allegrograph.py",
-        "triplestore/tests/test_qlever.py"
+        "triplestore/tests_GeoSPARQL/test_allegrograph.py",
+        "triplestore/tests_GeoSPARQL/test_graphdb.py",
+        "triplestore/tests_GeoSPARQL/test_jena.py",
+        "triplestore/tests_GeoSPARQL/test_qlever.py"
     ]
 
     # Allow passing through extra pytest args, e.g. -q or -k pattern

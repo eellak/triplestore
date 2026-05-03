@@ -8,13 +8,14 @@ All operations are scoped within the named graph 'http://example.org/test',
 and use a local GraphDB instance with REST API access.
 """
 
+import csv
+import json
 import tempfile
 import time
 from pathlib import Path
 
 import pytest
 import requests
-
 from triplestore import Triplestore
 from triplestore.utils import detect_graphdb_url
 
@@ -22,6 +23,9 @@ SUBJECT = "http://example.org/s"
 PREDICATE = "http://example.org/p"
 OBJECT = "http://example.org/o"
 SPARQL_QUERY = "SELECT ?s ?p ?o WHERE { GRAPH <http://example.org/test> { ?s ?p ?o } }"
+
+TEST_FILES_DIR = Path(__file__).parent / "tests_files"
+TEST_FILES_DIR.mkdir(exist_ok=True)
 
 
 def is_graphdb_available():
@@ -123,6 +127,133 @@ def test_query_roundtrip_add():
     assert count == 1
 
 
+def test_add_delete_with_literal_object():
+    """Test add()/delete() with a plain string literal object."""
+    store = Triplestore("graphdb", config=config)
+    store.clear()
+
+    s = "http://example.org/person1"
+    p = "http://example.org/name"
+    o = "Alice"
+
+    store.add(s, p, o)
+
+    results = store.query(
+        f"""
+        SELECT ?o WHERE {{
+            GRAPH <{config["graph"]}> {{
+                <{s}> <{p}> ?o
+            }}
+        }}
+        """
+    )
+
+    assert len(results) == 1
+    assert results[0]["o"] == "Alice"
+
+    store.delete(s, p, o)
+
+    results_after_delete = store.query(
+        f"""
+        SELECT ?o WHERE {{
+            GRAPH <{config["graph"]}> {{
+                <{s}> <{p}> ?o
+            }}
+        }}
+        """
+    )
+    assert results_after_delete == []
+
+
+def test_add_delete_with_typed_and_lang_literals():
+    """Test add()/delete() with typed and language-tagged literal objects."""
+    store = Triplestore("graphdb", config=config)
+    store.clear()
+
+    s1 = "http://example.org/person2"
+    p1 = "http://example.org/age"
+    o1 = 25
+
+    s2 = "http://example.org/person3"
+    p2 = "http://example.org/label"
+    o2 = {"value": "hallo", "lang": "de"}
+
+    store.add(s1, p1, o1)
+    store.add(s2, p2, o2)
+
+    results = store.query(
+        f"""
+        SELECT ?s ?p ?o WHERE {{
+            GRAPH <{config["graph"]}> {{
+                ?s ?p ?o
+            }}
+        }}
+        """
+    )
+
+    assert any(r["s"] == s1 and r["p"] == p1 and r["o"] == "25" for r in results)
+    assert any(r["s"] == s2 and r["p"] == p2 and r["o"] == "hallo" for r in results)
+
+    store.delete(s1, p1, o1)
+    store.delete(s2, p2, o2)
+
+    results_after_delete = store.query(
+        f"""
+        SELECT ?s ?p ?o WHERE {{
+            GRAPH <{config["graph"]}> {{
+                ?s ?p ?o
+            }}
+        }}
+        """
+    )
+
+    assert not any(r["s"] == s1 and r["p"] == p1 and r["o"] == "25" for r in results_after_delete)
+    assert not any(r["s"] == s2 and r["p"] == p2 and r["o"] == "hallo" for r in results_after_delete)
+
+
+def test_add_delete_with_blank_node_subject():
+    """Test add()/delete() with a blank node as subject."""
+    store = Triplestore("graphdb", config=config)
+    store.clear()
+
+    s = "_:b1"
+    p = "http://example.org/name"
+    o = "Anonymous"
+
+    store.add(s, p, o)
+
+    results = store.query(
+        f"""
+        SELECT ?s ?o WHERE {{
+            GRAPH <{config["graph"]}> {{
+                ?s <{p}> ?o
+            }}
+        }}
+        """
+    )
+
+    assert len(results) == 1
+    assert results[0]["o"] == "Anonymous"
+
+    with pytest.raises(ValueError, match="Cannot delete triples using a blank node as subject."):
+        store.delete(s, p, o)
+
+
+def test_add_rejects_invalid_rdf_positions():
+    """Test that add() rejects literals as subjects and non-IRI predicates."""
+    store = Triplestore("graphdb", config=config)
+    store.clear()
+
+    with pytest.raises(ValueError, match="subject of an RDF triple cannot be a literal"):
+        store.add("Alice", "http://example.org/name", "Bob")
+
+    with pytest.raises(ValueError, match="predicate of an RDF triple must be an IRI"):
+        store.add("http://example.org/person4", "_:p1", "Bob")
+
+    with pytest.raises(ValueError, match="predicate of an RDF triple must be an IRI"):
+        store.add("http://example.org/person4", "name", "Bob")
+
+
 def test_query_returns_empty_when_no_match():
     """Test that a SPARQL query returns no results when no match exists."""
     store = Triplestore("graphdb", config=config)
@@ -150,6 +281,41 @@ def test_load_from_turtle_file():
 
     bindings = [str(binding) for binding in results]
     assert any(SUBJECT in b and PREDICATE in b and OBJECT in b for b in bindings)
+
+
+def test_load_from_ntriples_file():
+    """Test loading triples from a .nt file into the store."""
+    ntriples_data = "<http://example.org/s> <http://example.org/p> <http://example.org/o> ."
+
+    with tempfile.NamedTemporaryFile(delete=False, mode="w", suffix=".nt", encoding="utf-8") as f:
+        f.write(ntriples_data)
+        tmp_path = f.name
+
+    store = Triplestore("graphdb", config=config)
+    store.clear()
+    store.load(tmp_path)
+
+    results = store.query(SPARQL_QUERY)
+    Path(tmp_path).unlink()
+
+    bindings = [str(binding) for binding in results]
+    assert any(SUBJECT in b and PREDICATE in b and OBJECT in b for b in bindings)
+
+
+def test_load_rejects_unsupported_file_format():
+    """Test that load() rejects unsupported RDF file formats."""
+    invalid_data = "this is not rdf"
+
+    with tempfile.NamedTemporaryFile(delete=False, mode="w", suffix=".txt", encoding="utf-8") as f:
+        f.write(invalid_data)
+        tmp_path = f.name
+
+    store = Triplestore("graphdb", config=config)
+
+    with pytest.raises(ValueError, match="Unsupported RDF file format"):
+        store.load(tmp_path)
+
+    Path(tmp_path).unlink()
 
 
 def test_clear():
@@ -244,3 +410,556 @@ def test_execute():
     clr_out = store.execute(q)
     assert clr_out is None
     assert store.execute(f"ASK WHERE {{ GRAPH <{graph}> {{ ?s ?p ?o }} }}") is False
+
+
+def test_select_star():
+    """Test SELECT *: verifies correct binding, completeness, and result integrity."""
+    store = Triplestore("graphdb", config=config)
+    store.clear()
+
+    # Insert multiple triples
+    triples = [
+        ("http://example.org/s1", "http://example.org/p1", "http://example.org/o1"),
+        ("http://example.org/s2", "http://example.org/p2", "http://example.org/o2"),
+        ("http://example.org/s3", "http://example.org/p3", "http://example.org/o3"),
+    ]
+
+    for s, p, o in triples:
+        store.add(s, p, o)
+
+    # SELECT * query
+    results = store.query(
+        f"""
+        SELECT * WHERE {{
+            GRAPH <{config["graph"]}> {{
+                ?s ?p ?o
+            }}
+        }}
+        """
+    )
+
+    # Check number of results
+    assert len(results) == len(triples)
+
+    expected_rows = [{"s": s, "p": p, "o": o} for s, p, o in triples]
+
+    # Check that all variables are present in each row
+    for row in results:
+        assert set(row.keys()) == {"s", "p", "o"}
+
+    # Check that all values are valid (strings and not None)
+    for row in results:
+        for v in row.values():
+            assert isinstance(v, str)
+            assert v is not None
+
+    # Check exact match between expected and actual results (order-independent)
+    assert {tuple(sorted(r.items())) for r in results} == \
+           {tuple(sorted(r.items())) for r in expected_rows}
+
+    # Ensure no duplicate rows are returned
+    assert len(results) == len({tuple(sorted(r.items())) for r in results})
+
+
+def test_query_export_json():
+    """Test that query() exports SELECT results to a JSON file correctly."""
+    store = Triplestore("graphdb", config=config)
+    store.clear()
+
+    store.add(SUBJECT, PREDICATE, OBJECT)
+
+    output_file = TEST_FILES_DIR / "graphdb_results1"
+    results = store.query(SPARQL_QUERY, export=True, output_format="json", filename=str(output_file))
+
+    exported_path = TEST_FILES_DIR / "graphdb_results1.json"
+
+    assert exported_path.exists()
+    assert isinstance(results, list)
+    assert len(results) == 1
+
+    data = json.loads(exported_path.read_text(encoding="utf-8"))
+    assert isinstance(data, list)
+    assert len(data) == 1
+    assert data == results
+
+    row = data[0]
+    assert row["s"] == SUBJECT
+    assert row["p"] == PREDICATE
+    assert row["o"] == OBJECT
+
+
+def test_query_export_csv():
+    """Test that query() exports SELECT results to a CSV file correctly."""
+    store = Triplestore("graphdb", config=config)
+    store.clear()
+
+    store.add(SUBJECT, PREDICATE, OBJECT)
+
+    output_file = TEST_FILES_DIR / "graphdb_results2"
+    results = store.query(SPARQL_QUERY, export=True, output_format="csv", filename=str(output_file))
+
+    exported_path = TEST_FILES_DIR / "graphdb_results2.csv"
+
+    assert exported_path.exists()
+    assert isinstance(results, list)
+    assert len(results) == 1
+
+    with exported_path.open("r", encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        rows = list(reader)
+
+    assert len(rows) == 1
+    assert rows[0]["s"] == SUBJECT
+    assert rows[0]["p"] == PREDICATE
+    assert rows[0]["o"] == OBJECT
+
+
+def test_export_csv_with_custom_separator():
+    """Test that query() exports SELECT results to CSV using a custom separator."""
+    store = Triplestore("graphdb", config=config)
+    store.clear()
+
+    store.add(SUBJECT, PREDICATE, OBJECT)
+
+    output_file = TEST_FILES_DIR / "custom_separator"
+    results = store.query(SPARQL_QUERY, export=True, output_format="csv", filename=str(output_file), separator=";")
+
+    exported_path = TEST_FILES_DIR / "custom_separator.csv"
+
+    assert exported_path.exists()
+    assert isinstance(results, list)
+    assert len(results) == 1
+
+    # Check raw file content for separator
+    content = exported_path.read_text()
+    assert ";" in content
+
+    with exported_path.open("r", encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f, delimiter=";")
+        rows = list(reader)
+
+    assert len(rows) == 1
+    assert rows[0]["s"] == SUBJECT
+    assert rows[0]["p"] == PREDICATE
+    assert rows[0]["o"] == OBJECT
+
+
+def test_query_export_json_with_existing_extension():
+    """Test that query() respects an already-correct filename extension."""
+    store = Triplestore("graphdb", config=config)
+    store.clear()
+
+    store.add(SUBJECT, PREDICATE, OBJECT)
+
+    output_file = TEST_FILES_DIR / "already_json.json"
+    store.query(SPARQL_QUERY, export=True, output_format="json", filename=str(output_file))
+
+    assert output_file.exists()
+    assert not (TEST_FILES_DIR / "already_json.json.json").exists()
+
+
+def test_query_export_replaces_wrong_extension():
+    """Test that query() replaces a wrong filename extension with the requested one."""
+    store = Triplestore("graphdb", config=config)
+    store.clear()
+
+    store.add(SUBJECT, PREDICATE, OBJECT)
+
+    output_file = TEST_FILES_DIR / "results.txt"
+    store.query(SPARQL_QUERY, export=True, output_format="csv", filename=str(output_file))
+
+    assert not output_file.exists()
+    assert (TEST_FILES_DIR / "results.csv").exists()
+
+
+def test_query_export_empty_results_json():
+    """Test exporting an empty SELECT result set to JSON."""
+    store = Triplestore("graphdb", config=config)
+    store.clear()
+
+    output_file = TEST_FILES_DIR / "empty_results"
+    results = store.query("SELECT ?s WHERE { <http://example.org/does-not-exist> ?p ?o }",
+                        export=True, output_format="json", filename=str(output_file))
+
+    exported_path = TEST_FILES_DIR / "empty_results.json"
+
+    assert results == []
+    assert exported_path.exists()
+
+    data = json.loads(exported_path.read_text(encoding="utf-8"))
+    assert data == []
+
+
+def test_query_export_empty_results_csv():
+    """Test exporting an empty SELECT result set to CSV still creates a valid file."""
+    store = Triplestore("graphdb", config=config)
+    store.clear()
+
+    output_file = TEST_FILES_DIR / "empty_results"
+    results = store.query("SELECT ?s WHERE { <http://example.org/does-not-exist> ?p ?o }",
+                        export=True, output_format="csv", filename=str(output_file))
+
+    exported_path = TEST_FILES_DIR / "empty_results.csv"
+
+    assert results == []
+    assert exported_path.exists()
+
+    with exported_path.open("r", encoding="utf-8", newline="") as f:
+        content = f.read()
+
+    # For empty results, current implementation writes just an empty file.
+    assert not content.strip()
+
+
+def test_query_rejects_non_select_query():
+    """Test that query() rejects non-SELECT SPARQL queries."""
+    store = Triplestore("graphdb", config=config)
+    store.clear()
+
+    with pytest.raises(ValueError, match=r"Only SELECT queries are supported"):
+        store.query(f"ASK WHERE {{ GRAPH <{config['graph']}> {{ ?s ?p ?o }} }}")
+
+
+def test_query_rejects_unsupported_export_format():
+    """Test that query() rejects unsupported export formats for SELECT queries."""
+    store = Triplestore("graphdb", config=config)
+    store.clear()
+
+    with pytest.raises(ValueError, match="Unsupported export format"):
+        store.query(SPARQL_QUERY, export=True, output_format="ttl", filename="bad_output")
+
+
+def test_query_no_export_does_not_create_file():
+    """Test that query() does not create any file when export=False."""
+    store = Triplestore("graphdb", config=config)
+    store.clear()
+
+    store.add(SUBJECT, PREDICATE, OBJECT)
+
+    output_file = TEST_FILES_DIR / "should_not_exist.json"
+    results = store.query(SPARQL_QUERY, export=False, output_format="json", filename=str(output_file))
+
+    assert len(results) == 1
+    assert not output_file.exists()
+
+
+def test_query_accepts_prefixed_select_with_export():
+    """Test that query() correctly detects SELECT when PREFIX declarations precede it."""
+    store = Triplestore("graphdb", config=config)
+    store.clear()
+
+    store.add(SUBJECT, PREDICATE, OBJECT)
+
+    sparql = f"""
+        PREFIX ex: <http://example.org/>
+        SELECT ?s ?p ?o
+        WHERE {{
+            GRAPH <{config["graph"]}> {{
+                ?s ?p ?o
+            }}
+        }}
+    """
+
+    output_file = TEST_FILES_DIR / "prefixed"
+    results = store.query(sparql, export=True, output_format="json", filename=str(output_file))
+
+    exported_path = TEST_FILES_DIR / "prefixed.json"
+
+    assert exported_path.exists()
+    assert len(results) == 1
+    assert results[0]["s"] == SUBJECT
+    assert results[0]["p"] == PREDICATE
+    assert results[0]["o"] == OBJECT
+
+
+def test_execute_export_select_json():
+    """Test that execute() exports SELECT results to JSON correctly."""
+    store = Triplestore("graphdb", config=config)
+    store.clear()
+
+    graph = config["graph"]
+    store.execute(f"""
+        INSERT DATA {{
+            GRAPH <{graph}> {{
+                <{SUBJECT}> <{PREDICATE}> <{OBJECT}> .
+            }}
+        }}
+    """)
+
+    output_file = TEST_FILES_DIR / "execute_select_json"
+    sparql = f"""
+        SELECT ?s ?p ?o
+        WHERE {{
+            GRAPH <{graph}> {{
+                ?s ?p ?o
+            }}
+        }}
+    """
+
+    results = store.execute(sparql, export=True, output_format="json", filename=str(output_file))
+
+    exported_path = TEST_FILES_DIR / "execute_select_json.json"
+
+    assert exported_path.exists()
+    assert isinstance(results, list)
+    assert len(results) == 1
+
+    data = json.loads(exported_path.read_text(encoding="utf-8"))
+    assert data == results
+    assert data[0]["s"] == SUBJECT
+    assert data[0]["p"] == PREDICATE
+    assert data[0]["o"] == OBJECT
+
+
+def test_execute_export_select_csv():
+    """Test that execute() exports SELECT results to CSV correctly."""
+    store = Triplestore("graphdb", config=config)
+    store.clear()
+
+    graph = config["graph"]
+    store.execute(f"""
+        INSERT DATA {{
+            GRAPH <{graph}> {{
+                <{SUBJECT}> <{PREDICATE}> <{OBJECT}> .
+            }}
+        }}
+    """)
+
+    output_file = TEST_FILES_DIR / "execute_select_csv"
+    sparql = f"""
+        SELECT ?s ?p ?o
+        WHERE {{
+            GRAPH <{graph}> {{
+                ?s ?p ?o
+            }}
+        }}
+    """
+
+    results = store.execute(sparql, export=True, output_format="csv", filename=str(output_file))
+
+    exported_path = TEST_FILES_DIR / "execute_select_csv.csv"
+
+    assert exported_path.exists()
+    assert isinstance(results, list)
+    assert len(results) == 1
+
+    with exported_path.open("r", encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        rows = list(reader)
+
+    assert len(rows) == 1
+    assert rows[0]["s"] == SUBJECT
+    assert rows[0]["p"] == PREDICATE
+    assert rows[0]["o"] == OBJECT
+
+
+def test_execute_export_ask_json():
+    """Test that execute() exports ASK results to JSON correctly."""
+    store = Triplestore("graphdb", config=config)
+    store.clear()
+
+    graph = config["graph"]
+    store.execute(f"""
+        INSERT DATA {{
+            GRAPH <{graph}> {{
+                <{SUBJECT}> <{PREDICATE}> <{OBJECT}> .
+            }}
+        }}
+    """)
+
+    output_file = TEST_FILES_DIR / "execute_ask_json"
+    sparql = f"ASK WHERE {{ GRAPH <{graph}> {{ <{SUBJECT}> <{PREDICATE}> <{OBJECT}> }} }}"
+
+    result = store.execute(sparql, export=True, output_format="json", filename=str(output_file))
+
+    exported_path = TEST_FILES_DIR / "execute_ask_json.json"
+
+    assert exported_path.exists()
+    assert result is True
+
+    data = json.loads(exported_path.read_text(encoding="utf-8"))
+    assert data == {"boolean": True}
+
+
+def test_execute_export_ask_txt():
+    """Test that execute() exports ASK results to TXT correctly."""
+    store = Triplestore("graphdb", config=config)
+    store.clear()
+
+    graph = config["graph"]
+    store.execute(f"""
+        INSERT DATA {{
+            GRAPH <{graph}> {{
+                <{SUBJECT}> <{PREDICATE}> <{OBJECT}> .
+            }}
+        }}
+    """)
+
+    output_file = TEST_FILES_DIR / "execute_ask_txt"
+    sparql = f"ASK WHERE {{ GRAPH <{graph}> {{ <{SUBJECT}> <{PREDICATE}> <{OBJECT}> }} }}"
+
+    result = store.execute(sparql, export=True, output_format="txt", filename=str(output_file))
+
+    exported_path = TEST_FILES_DIR / "execute_ask_txt.txt"
+
+    assert exported_path.exists()
+    assert result is True
+    assert exported_path.read_text(encoding="utf-8").strip() == "true"
+
+
+def test_execute_export_construct_ttl():
+    """Test that execute() exports CONSTRUCT results to Turtle correctly."""
+    store = Triplestore("graphdb", config=config)
+    store.clear()
+
+    graph = config["graph"]
+    store.execute(f"""
+        INSERT DATA {{
+            GRAPH <{graph}> {{
+                <{SUBJECT}> <{PREDICATE}> <{OBJECT}> .
+            }}
+        }}
+    """)
+
+    output_file = TEST_FILES_DIR / "execute_construct"
+    sparql = f"""
+        CONSTRUCT {{ ?s ?p ?o }}
+        WHERE {{
+            GRAPH <{graph}> {{
+                ?s ?p ?o
+            }}
+        }}
+    """
+
+    result = store.execute(sparql, export=True, output_format="ttl", filename=str(output_file))
+
+    exported_path = TEST_FILES_DIR / "execute_construct.ttl"
+
+    assert exported_path.exists()
+    assert isinstance(result, str)
+
+    content = exported_path.read_text(encoding="utf-8")
+    assert content.splitlines() == result.splitlines()
+    assert SUBJECT in content
+    assert PREDICATE in content
+    assert OBJECT in content
+
+
+def test_execute_export_describe_ttl():
+    """Test that execute() exports DESCRIBE results to Turtle correctly."""
+    store = Triplestore("graphdb", config=config)
+    store.clear()
+
+    graph = config["graph"]
+    store.execute(f"""
+        INSERT DATA {{
+            GRAPH <{graph}> {{
+                <{SUBJECT}> <{PREDICATE}> <{OBJECT}> .
+            }}
+        }}
+    """)
+
+    output_file = TEST_FILES_DIR / "execute_describe"
+    sparql = f"DESCRIBE <{SUBJECT}>"
+
+    result = store.execute(sparql, export=True, output_format="ttl", filename=str(output_file))
+
+    exported_path = TEST_FILES_DIR / "execute_describe.ttl"
+
+    assert exported_path.exists()
+    assert isinstance(result, str)
+
+    content = exported_path.read_text(encoding="utf-8")
+    assert content.splitlines() == result.splitlines()
+    assert SUBJECT in content
+
+
+def test_execute_export_uses_default_format_for_ask():
+    """Test that execute() uses the default export format for ASK when output_format is omitted."""
+    store = Triplestore("graphdb", config=config)
+    store.clear()
+
+    graph = config["graph"]
+    store.execute(f"""
+        INSERT DATA {{
+            GRAPH <{graph}> {{
+                <{SUBJECT}> <{PREDICATE}> <{OBJECT}> .
+            }}
+        }}
+    """)
+
+    output_file = TEST_FILES_DIR / "execute_ask_default"
+    sparql = f"ASK WHERE {{ GRAPH <{graph}> {{ <{SUBJECT}> <{PREDICATE}> <{OBJECT}> }} }}"
+
+    result = store.execute(sparql, export=True, filename=str(output_file))
+
+    exported_path = TEST_FILES_DIR / "execute_ask_default.json"
+
+    assert result is True
+    assert exported_path.exists()
+
+    data = json.loads(exported_path.read_text(encoding="utf-8"))
+    assert data == {"boolean": True}
+
+
+def test_execute_export_uses_default_format_for_construct():
+    """Test that execute() uses the default export format for CONSTRUCT when output_format is omitted."""
+    store = Triplestore("graphdb", config=config)
+    store.clear()
+
+    graph = config["graph"]
+    store.execute(f"""
+        INSERT DATA {{
+            GRAPH <{graph}> {{
+                <{SUBJECT}> <{PREDICATE}> <{OBJECT}> .
+            }}
+        }}
+    """)
+
+    output_file = TEST_FILES_DIR / "execute_construct_default"
+    sparql = f"""
+        CONSTRUCT {{ ?s ?p ?o }}
+        WHERE {{
+            GRAPH <{graph}> {{
+                ?s ?p ?o
+            }}
+        }}
+    """
+
+    result = store.execute(sparql, export=True, filename=str(output_file))
+
+    exported_path = TEST_FILES_DIR / "execute_construct_default.ttl"
+
+    assert isinstance(result, str)
+    assert exported_path.exists()
+    assert exported_path.read_text(encoding="utf-8").splitlines() == result.splitlines()
+
+
+def test_execute_rejects_unsupported_export_format_for_ask():
+    """Test that execute() rejects unsupported export formats for ASK queries."""
+    store = Triplestore("graphdb", config=config)
+    store.clear()
+
+    graph = config["graph"]
+    sparql = f"ASK WHERE {{ GRAPH <{graph}> {{ ?s ?p ?o }} }}"
+
+    with pytest.raises(ValueError, match="Unsupported export format"):
+        store.execute(sparql, export=True, output_format="csv", filename=str(TEST_FILES_DIR / "bad_ask"))
+
+
+def test_execute_rejects_export_for_update_operations():
+    """Test that execute() rejects export for SPARQL update operations."""
+    store = Triplestore("graphdb", config=config)
+    store.clear()
+
+    graph = config["graph"]
+    sparql = f"""
+        INSERT DATA {{
+            GRAPH <{graph}> {{
+                <{SUBJECT}> <{PREDICATE}> <{OBJECT}> .
+            }}
+        }}
+    """
+
+    with pytest.raises(ValueError, match="Unsupported export format"):
+        store.execute(sparql, export=True, output_format="json", filename=str(TEST_FILES_DIR / "bad_update"))

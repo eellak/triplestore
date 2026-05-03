@@ -8,7 +8,16 @@ from typing import Any
 import requests
 
 from triplestore.base import TriplestoreBackend
-from triplestore.utils import validate_config
+from triplestore.utils import (
+    export_ask_result,
+    export_rdf_result,
+    export_select_results,
+    get_rdf_content_type,
+    get_sparql_query_type,
+    resolve_export_format,
+    validate_config,
+    validate_rdf_term,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -59,11 +68,15 @@ class Blazegraph(TriplestoreBackend):
 
     def load(self, filename: str) -> None:
         """
-        Load RDF triples from a Turtle (.ttl) file into Blazegraph.
+        Load RDF triples from a supported RDF file into Blazegraph.
+
+        Supported formats:
+        - .ttl: Turtle
+        - .nt: N-Triples
 
         Parameters:
         filename : str
-            Path to the Turtle file.
+            Path to the RDF file to load (.ttl or .nt).
 
         Raises
         ------
@@ -75,27 +88,34 @@ class Blazegraph(TriplestoreBackend):
         if not Path(filename).exists():
             msg = f"[Blazegraph] File not found: {filename}"
             raise FileNotFoundError(msg)
+        
+        content_type = get_rdf_content_type(filename, backend_name="Blazegraph")
+        headers = {"Content-Type": content_type}
 
         data = Path(filename).read_bytes()
         params = {"context-uri": self.graph_uri} if self.graph_uri else {}
-        response = requests.post(self.update_url, headers=self.headers_load, data=data, params=params, timeout=None)
+        response = requests.post(self.update_url, headers=headers, data=data, params=params, timeout=None)
         if response.status_code not in {200, 204, 201}:
             msg = f"[Blazegraph] Load failed: {response.status_code}\n{response.text}"
             raise RuntimeError(msg)
 
-    def add(self, s: str, p: str, o: str) -> None:
+    def add(self, s: Any, p: Any, o: Any) -> None:
         """
         Add a triple to the Blazegraph store.
 
         Parameters:
-        s : str
-            Subject URI.
-        p : str
-            Predicate URI.
-        o : str
-            Object URI.
+        s : Any
+            The subject value of the triple. Must serialize to an RDF IRI or blank node.
+        p : Any
+            The predicate value of the triple. Must serialize to an RDF IRI.
+        o : Any
+            The object value of the triple. May serialize to an RDF IRI, blank node, or literal.
         """
-        triple = f"<{s}> <{p}> <{o}> ."
+        s_term = validate_rdf_term(s, "subject", "Blazegraph")
+        p_term = validate_rdf_term(p, "predicate", "Blazegraph")
+        o_term = validate_rdf_term(o, "object", "Blazegraph")
+
+        triple = f"{s_term} {p_term} {o_term} ."
         sparql = (
             f"INSERT DATA {{ GRAPH <{self.graph_uri}> {{ {triple} }} }}"
             if self.graph_uri else
@@ -103,19 +123,39 @@ class Blazegraph(TriplestoreBackend):
         )
         self._run_update(sparql)
 
-    def delete(self, s: str, p: str, o: str) -> None:
+    def delete(self, s: Any, p: Any, o: Any) -> None:
         """
         Delete a triple from the Blazegraph store.
 
         Parameters:
-        s : str
-            Subject URI.
-        p : str
-            Predicate URI.
-        o : str
-            Object URI.
+        s : Any
+            The subject value of the triple. Must serialize to an RDF IRI or blank node.
+        p : Any
+            The predicate value of the triple. Must serialize to an RDF IRI.
+        o : Any
+            The object value of the triple. May serialize to an RDF IRI, blank node, or literal.
+
+        Raises
+        ------
+        ValueError
+            If a blank node is provided as the subject.
         """
-        triple = f"<{s}> <{p}> <{o}> ."
+        s_term = validate_rdf_term(s, "subject", "Blazegraph")
+        p_term = validate_rdf_term(p, "predicate", "Blazegraph")
+        o_term = validate_rdf_term(o, "object", "Blazegraph")
+
+        if isinstance(s, str) and s.startswith("_:"):
+            msg = (
+                "[Blazegraph] Cannot delete triples using a blank node as subject.\n\n"
+                "Blank node identifiers (e.g. '_:b1') are local to a single SPARQL query "
+                "or update and do not represent stable, reusable identifiers.\n"
+                "Recommended alternatives:\n"
+                " - Use a persistent IRI instead of a blank node if you need to delete the triple later.\n"
+                " - Or delete using a pattern-based query (e.g. DELETE WHERE) that matches the triple.\n\n"
+            )
+            raise ValueError(msg)
+
+        triple = f"{s_term} {p_term} {o_term} ."
         sparql = (
             f"DELETE DATA {{ GRAPH <{self.graph_uri}> {{ {triple} }} }}"
             if self.graph_uri else
@@ -123,15 +163,25 @@ class Blazegraph(TriplestoreBackend):
         )
         self._run_update(sparql)
 
-    def execute(self, sparql: str) -> Any:
+    def execute(self, sparql: str, *, export: bool = False, output_format: str | None = None, filename: str | None = None, separator: str = ",") -> Any:
         """
         Execute any SPARQL query (SELECT, ASK, CONSTRUCT, DESCRIBE, UPDATE).
 
-        Parameters:
+        Parameters
+        ----------
         sparql : str
             The SPARQL query or update string.
+        export : bool, optional
+            If True, also save the query result to a local file.
+        output_format : str, optional
+            Export format for saved results. If omitted and export=True, a default format is chosen based on the query type.
+        filename : str, optional
+            Output filename for exported results. The file extension is determined automatically from the requested export format.
+        separator : str, optional
+            Column separator to use when exporting CSV files. Defaults to ",".
 
-        Returns:
+        Returns
+        -------
         Any
             - list of dict for SELECT
             - bool for ASK
@@ -143,7 +193,8 @@ class Blazegraph(TriplestoreBackend):
         RuntimeError
             If the server responds with an error.
         """
-        query_type = sparql.strip().split(maxsplit=1)[0].upper()
+        query_type = get_sparql_query_type(sparql)
+        chosen_format = resolve_export_format(query_type, export=export, output_format=output_format, backend_name="Blazegraph")
 
         # SELECT / ASK
         if query_type in {"SELECT", "ASK"}:
@@ -153,45 +204,89 @@ class Blazegraph(TriplestoreBackend):
                 raise RuntimeError(msg)
 
             data = response.json()
-            if query_type == "ASK":
-                return bool(data.get("boolean", False))
-            bindings = data.get("results", {}).get("bindings", [])
-            return [{k: v["value"] for k, v in row.items()} for row in bindings]
 
-        # CONSTRUCT / DESCRIBE → RDF (Turtle)
+            if query_type == "ASK":
+                result = bool(data.get("boolean", False))
+                if export:
+                    export_ask_result(result, output_format=chosen_format, filename=filename, backend_name="Blazegraph")
+                return result
+
+            bindings = data.get("results", {}).get("bindings", [])
+            results = [{k: v["value"] for k, v in row.items()} for row in bindings]
+
+            if export:
+                export_select_results(results, output_format=chosen_format, filename=filename, separator=separator, backend_name="Blazegraph")
+
+            return results
+
+        # CONSTRUCT / DESCRIBE
         if query_type in {"CONSTRUCT", "DESCRIBE"}:
             response = requests.post(self.query_url, headers={"Accept": "text/turtle"}, data={"query": sparql}, timeout=None)
             if response.status_code != 200:
                 msg = f"[Blazegraph] SPARQL query failed: {response.status_code}\n{response.text}"
                 raise RuntimeError(msg)
-            return response.text
+
+            rdf_text = response.text
+
+            if export:
+                export_rdf_result(rdf_text, output_format=chosen_format, filename=filename, backend_name="Blazegraph")
+
+            return rdf_text
 
         # UPDATE family
-        if query_type in {"WITH", "INSERT", "DELETE", "LOAD", "CLEAR", "CREATE", "DROP",
-                "MOVE", "COPY", "ADD", "MODIFY"}:
+        if query_type in {
+            "WITH", "INSERT", "DELETE", "LOAD", "CLEAR", "CREATE", "DROP",
+            "MOVE", "COPY", "ADD", "MODIFY"
+        }:
             self._run_update(sparql)
             return None
 
         msg = f"[Blazegraph] Unsupported SPARQL keyword: {query_type}"
         raise RuntimeError(msg)
 
-    def query(self, sparql: str) -> list[dict[str, str]]:
+    def query(self, sparql: str, *, export: bool = False, output_format: str = "json", filename: str | None = None, separator: str = ",") -> list[dict[str, str]]:
         """
         Execute a SPARQL SELECT query against Blazegraph.
 
-        Parameters:
+        Parameters
+        ----------
         sparql : str
             The SPARQL query string.
+        export : bool, optional
+            If True, also save the query results to a local file.
+        output_format : str, optional
+            Export format for saved results. Supported: 'json', 'csv'.
+        filename : str, optional
+            Output filename for exported results. The file extension is determined automatically
+            from the requested export format.
+        separator : str, optional
+            Column separator to use when exporting CSV files. Defaults to ",".
 
-        Returns:
-        list of dict
+        Returns
+        -------
+        list[dict[str, str]]
             A list of bindings from the query results.
 
         Raises
         ------
+        ValueError
+            If query() is called with a non-SELECT query or with an unsupported export format.
         RuntimeError
             If the query fails or the response is invalid.
         """
+        query_type = get_sparql_query_type(sparql)
+
+        if query_type != "SELECT":
+            msg = (
+                f"[Blazegraph] Unsupported query type '{query_type}' for query(). "
+                "Only SELECT queries are supported. "
+                "Use execute() for UPDATE queries or other query forms."
+            )
+            raise ValueError(msg)
+
+        if export:
+            chosen_format = resolve_export_format(query_type, export=export, output_format=output_format, backend_name="Blazegraph")
+
         response = requests.post(self.query_url, headers=self.headers_query, data={"query": sparql}, timeout=None)
         if response.status_code != 200:
             msg = f"[Blazegraph] SPARQL query failed: {response.status_code}\n{response.text}"
@@ -199,7 +294,12 @@ class Blazegraph(TriplestoreBackend):
 
         data = response.json()
         bindings = data.get("results", {}).get("bindings", [])
-        return [{k: v["value"] for k, v in row.items()} for row in bindings]
+        results = [{k: v["value"] for k, v in row.items()} for row in bindings]
+
+        if export:
+            export_select_results(results, output_format=chosen_format, filename=filename, separator=separator, backend_name="Blazegraph")
+
+        return results
 
     def clear(self) -> None:
         """

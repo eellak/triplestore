@@ -13,6 +13,12 @@ The goal of the project is to **explore, test, benchmark, and abstract multiple 
 
 **Mentor**: [Alexios Zavras](https://github.com/zvr)
 
+## Citation
+
+The released version of this software has been archived on Zenodo and is available under the following DOI:
+
+**DOI:** [10.5281/zenodo.20759436](https://doi.org/10.5281/zenodo.20759436)
+
 ## The Problem
 
 RDF triplestores are essential for managing linked data and semantic web applications.

@@ -10,9 +10,7 @@ authors = [
 
 requires-python = ">=3.10"
 
-dependencies = [
-    "shapely>=2.1.2",
-]
+dependencies = []
 
 [build-system]
 requires = ["hatchling"]
@@ -40,6 +38,8 @@ qlever = ["requests>=2.32.4"]
 rdf4j = ["requests>=2.32.4"]
 
 virtuoso = ["requests>=2.32.4"]
+
+geo = ["shapely>=2.1.2"]
 
 all = [
     "agraph-python>=104.3.0",

@@ -13,7 +13,6 @@ from pathlib import Path
 from typing import Any
 
 from triplestore.exceptions import TriplestoreMissingConfigValue
-from triplestore.utils_geo import export_geospatial_select_results
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +29,8 @@ SPARQL_DEFAULT_EXPORT_FORMATS = {
     "CONSTRUCT": "ttl",
     "DESCRIBE": "ttl",
 }
+
+GEOSPATIAL_EXPORT_FORMATS = {"geojson", "kml", "kmz", "gml"}
 
 SPARQL_ALLOWED_EXPORT_FORMATS = {
     "SELECT": {"json", "csv", "geojson", "kml", "kmz", "gml"},
@@ -231,6 +232,19 @@ def resolve_export_format(query_type: str, *, export: bool, output_format: str |
     return chosen_format
 
 
+def _export_geospatial_select_results(*args, backend_name: str, **kwargs):
+    try:
+        from triplestore.utils_geo import export_geospatial_select_results
+    except ImportError as exc:
+        msg = (
+            f"[{backend_name}] Geospatial export requires the optional geo dependencies. "
+            "Install it with: pip install triplestore[geo]"
+        )
+        raise RuntimeError(msg) from exc
+
+    return export_geospatial_select_results(*args, backend_name=backend_name, **kwargs)
+
+
 def export_select_results(results: list[dict[str, str]], output_format: str, filename: str | None = None, separator: str = ",", backend_name: str = "backend") -> Path:
     """
     Export SELECT query results to a local file.
@@ -281,9 +295,8 @@ def export_select_results(results: list[dict[str, str]], output_format: str, fil
 
         return output_path
 
-    if normalized_format in {"geojson", "kml", "kmz", "gml"}:
-        return export_geospatial_select_results(results,
-            output_format=normalized_format, output_path=output_path, backend_name=backend_name)
+    if normalized_format in GEOSPATIAL_EXPORT_FORMATS:
+        return _export_geospatial_select_results(results, output_format=normalized_format, output_path=output_path, backend_name=backend_name)
 
     msg = f"[{backend_name}] Unsupported SELECT export format: {output_format}"
     raise ValueError(msg)

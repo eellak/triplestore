@@ -1,6 +1,7 @@
 # Copyright (C) 2025 Maira Papadopoulou
 # SPDX-License-Identifier: Apache-2.0
 
+import importlib.util
 import os
 import re
 import shutil
@@ -189,6 +190,10 @@ def find_jena_geosparql_jar() -> str:
     raise FileNotFoundError(msg)
 
 
+def is_geo_extra_available() -> bool:
+    return importlib.util.find_spec("shapely") is not None
+
+
 def start_fuseki_server(dataset_name: str, host: str = "localhost", port: int = 3030, *, show_server_logs: bool = False) -> Path:
     """
     Start a local SPARQL/GeoSPARQL-enabled Fuseki server backed by a TDB2 dataset directory.
@@ -220,14 +225,17 @@ def start_fuseki_server(dataset_name: str, host: str = "localhost", port: int = 
     dataset_dir = tdb2_loc / service
     dataset_dir.mkdir(parents=True, exist_ok=True)
 
-    geosparql_jar = find_jena_geosparql_jar()
-
     env = os.environ.copy()
     env.setdefault("JAVA_TOOL_OPTIONS", "-Xms4g -Xmx8g")
     env.setdefault("FUSEKI_BASE", str(Path.home() / "fuseki" / "base"))
     Path(env["FUSEKI_BASE"]).mkdir(parents=True, exist_ok=True)
 
-    cmd = ["java", "-jar", geosparql_jar, "-p", str(port), "-d", service, "-u", "-t2", "-t", str(dataset_dir), "-i"]
+    if is_geo_extra_available():
+        geosparql_jar = find_jena_geosparql_jar()
+        cmd = ["java", "-jar", geosparql_jar, "-p", str(port), "-d", service, "-u", "-t2", "-t", str(dataset_dir), "-i"]
+    else:
+        fuseki_server = find_fuseki_server()
+        cmd = [fuseki_server, "--port", str(port), "--update", "--tdb2", "--loc", str(dataset_dir), f"/{service}"]
 
     if show_server_logs:
         subprocess.Popen(cmd, env=env)

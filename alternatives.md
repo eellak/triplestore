@@ -39,7 +39,7 @@ The following triplestores have been successfully integrated into this library:
 
 ### Virtuoso
   - **License**: GPL-2.0 
-  - **Deployment**: provided as a native server binary; can be run with a system-installed or locally built configuration
+  - **Deployment**: provided as a native server binary; can be run with a system-installed or locally built configuration 
 
 ---
 

@@ -1,13 +1,17 @@
 # Triplestore
 
 ## Overview
-A unified abstraction layer over multiple RDF triplestores with a common Python API.  
+A unified Python abstraction layer over multiple RDF triplestores, with optional GeoSPARQL-related support when provided by the selected backend.
+
 Currently supported backends:
 - AllegroGraph
 - Apache Jena
 - Blazegraph
 - GraphDB
 - Oxigraph
+- QLever
+- RDF4J
+- Virtuoso
 
 This package provides a consistent interface for loading data, executing SPARQL queries, and managing graphs across different triplestore engines.
 
@@ -32,9 +36,14 @@ For example:
 pip install triplestore[oxigraph]
 ```
 
+GeoSPARQL-related dependencies are optional and can be installed separately with:
+```bash
+pip install triplestore[geo]
+```
+
 ## How-To
 
-### Load a Turtle File (.ttl)
+### Load a RDF File
 The `load()` method imports RDF data from a file into the triplestore.
 - If a **named graph** is specified in the configuration, the data is loaded into that graph.
 - If no graph is specified, the data is loaded into the **default graph**.
@@ -55,11 +64,11 @@ from triplestore import Triplestore
 
 store = Triplestore(backend, config)
 
-subject = "http://example.org/s"
-predicate = "http://example.org/p"
-object = "http://example.org/o"
+subject = "http://example.org/Alice"
+predicate = "http://example.org/age"
+obj = 15
 
-store.add(subject, predicate, object)
+store.add(subject, predicate, obj)
 ```
 
 ### Delete a triple from a triplestore
@@ -73,17 +82,17 @@ from triplestore import Triplestore
 
 store = Triplestore(backend, config)
 
-subject = "http://example.org/s"
-predicate = "http://example.org/p"
-object = "http://example.org/o"
+subject = "http://example.org/Alice"
+predicate = "http://example.org/age"
+obj = 15
 
-store.delete(subject, predicate, object)
+store.delete(subject, predicate, obj)
 ```
 
 ### Query a triplestore
 The library provides two methods for running SPARQL queries:
-- query(): specifically designed for SELECT queries, returning a dictionary of result bindings.
-- execute(): a generic method for running any SPARQL query (e.g. SELECT, ASK, CONSTRUCT, INSERT, DELETE, UPDATE). Although `execute()` may also be used for SELECT, query() is the recommended convenience method.
+- query(): specifically designed for `SELECT` queries. It returns a list of dictionaries, where each dictionary represents one result binding.
+- execute(): a generic method for running any SPARQL query (e.g. `SELECT`, `ASK`, `CONSTRUCT`, `INSERT`, `DELETE`, `UPDATE`). Although `execute()` may also be used for SELECT, query() is the recommended convenience method.
 ```python
 from triplestore import Triplestore
 
@@ -94,11 +103,14 @@ sparql_query = "SELECT ?s ?p ?o WHERE { ?s ?p ?o }"
 results = store.query(sparql_query)
 print(results)  # {'s': '...','p':'...','o':'...'}
 
+# SELECT with export
+store.query(sparql_query, export=True, output_format="json", filename="results")
+
 # INSERT example
 subject = "http://example.org/s"
 predicate = "http://example.org/p"
-object = "http://example.org/o"
-update = f"INSERT DATA {{ <{subject}> <{predicate}> <{object}> }}"
+obj = "http://example.org/o"
+update = f"INSERT DATA {{ <{subject}> <{predicate}> <{obj}> . }}"
 
 store.execute(update)  # returns None
 ```
@@ -128,8 +140,8 @@ store.load(file)
 
 subject = "http://example.org/s"
 predicate = "http://example.org/p"
-object = "http://example.org/o"
-store.add(subject, predicate, object)
+obj = "http://example.org/o"
+store.add(subject, predicate, obj)
 
 sparql_query = "SELECT ?s ?p ?o WHERE { ?s ?p ?o }"
 results = store.query(sparql_query) 

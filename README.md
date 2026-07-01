@@ -1,17 +1,12 @@
-# GSoC 2025 Project: Exploring and Abstracting Triplestore Alternatives
+# triplestore
+
+> A backend-agnostic Python interface for loading, querying, and modifying [RDF](https://www.w3.org/RDF/) data across multiple triplestore implementations.
+
+`triplestore` is a Python library that provides a unified API over multiple RDF triplestore backends. It lets users load RDF data, execute SPARQL queries and updates, and switch between supported backends without rewriting application code.
+
+The library reduces the complexity of working with triplestores by hiding backend-specific configuration details behind a common Python interface. This makes it easier to load, query, and update RDF triples without having to learn the operational details of each individual backend. It also supports experimentation and benchmarking by allowing the same code to run against different triplestore implementations.
 
 This repository hosts the work carried out as part of **Google Summer of Code 2025** under the mentorship of **GFOSS – Open Technologies Alliance**.
-The goal of the project is to **explore, test, benchmark, and abstract multiple RDF triplestore implementations** into a unified Python interface.
-
-## Project Overview
-
-**Organization**: GFOSS – Open Technologies Alliance
-
-**Project**: Exploring and Abstracting Triplestore Alternatives
-
-**Contributor**: [Maria-Malamati Papadopoulou(goes by Maira Papadopoulou)](https://github.com/mairacs)
-
-**Mentor**: [Alexios Zavras](https://github.com/zvr)
 
 ## Citation
 
@@ -19,50 +14,45 @@ The released version of this software has been archived on Zenodo and is availab
 
 **DOI:** [10.5281/zenodo.20759436](https://doi.org/10.5281/zenodo.20759436)
 
-## The Problem
+## Features
 
-RDF triplestores are essential for managing linked data and semantic web applications.
-However, the current ecosystem suffers from:
+- **Backend-agnostic API** for interacting with multiple RDF triplestores.
+- **Pluggable backends** including Jena, GraphDB, Blazegraph, AllegroGraph, Oxigraph, QLever, RDF4J, and Virtuoso.
+- **RDF data loading** from local files.
+- **SPARQL query execution** for `SELECT`, `ASK`, `CONSTRUCT`, and `DESCRIBE`.
+- **SPARQL updates and triple modification** through `add()`, `delete()`, `clear()`, and `execute()`.
+- **Optional GeoSPARQL-related support** when provided by the selected backend.
+- **Export support** for query results, including JSON, CSV, Turtle, and geospatial formats where applicable.
 
-- **Fragmentation**: many triplestore implementations, each with its own API and quirks
-- **Steep learning curve**: developers must repeatedly adapt to different query/load interfaces
-- **Limited abstraction**: no unified layer to seamlessly switch between backends
+## Installation
+Install all backend dependencies:
+```bash
+pip install triplestore[all]
+```
+Install a specific backend extra:
+```bash
+pip install triplestore[<backend>]
+```
+Install optional GeoSPARQL-related dependencies:
+```bash
+pip install triplestore[geo]
+```
 
-This makes experimentation and adoption harder for developers, researchers, and organizations working with RDF data.
+## Quick Start
+```python
+from triplestore import Triplestore
 
-## The Solution
+store = Triplestore("oxigraph", config={})
 
-**Triplestore Abstraction Library**: a Python package providing a **unified API** across multiple triplestores.
+store.load("data.ttl")
 
-### Core Components Delivered
+results = store.query("SELECT ?s ?p ?o WHERE { ?s ?p ?o }")
+print(results)
 
-**Unified Python API**: Consistent interface for loading RDF, querying with SPARQL, and modifying triples
+store.add("http://example.org/Alice", "http://example.org/age", 15)
 
-**Backend Implementations**: Connectors for Jena, GraphDB, Blazegraph, AllegroGraph,and Oxigraph
-
-**Comprehensive Documentation**: `HOWTO.md`, `REFERENCE.md`, and backend-specific configuration guides
-
-**Testing Framework**: Automated pytest suite for backend validation
-
-## Project Characteristics
-### Implemented Features
-
-- **Unified Python API**: Provides a single interface to interact with multiple triplestore backends.
-- **RDF Data Loading**: 
-  - Supports loading data **exclusively in Turtle (`.ttl`) format.**
-  - Large files can be ingested, with some backends offering streaming upload.
-- **SPARQL Query Execution**:
-  - Full support for all query forms: `SELECT`, `ASK`, `CONSTRUCT`, `DESCRIBE`.
-  - Query results returned in Python-native structures (lists/dicts).
-- **Data Modification**: `add()`, `delete()`, and `clear()` supported in all backends.
-- **Multiple Backends**: Ready-to-use connectors for **Jena**, **GraphDB**, **Blazegraph**, **AllegroGraph**, **Oxigraph**.
-- **Error Handling**: Consistent exception system for backend discovery, configuration errors, and runtime issues.
-- **Testing & Benchmarking**:
-  - Pytest-based test suite for all backends.
-  - Benchmarking tools for comparing performance.
-
-### Optional / Backend-Specific Features
-- **Reasoning**: Available only in backends that support inference (e.g., GraphDB, AllegroGraph).
+store.clear()
+```
 
 ## 📚 Documentation
 
@@ -77,13 +67,21 @@ This makes experimentation and adoption harder for developers, researchers, and 
 The set of triplestore implementations that might be handled
 is listed in a separate [file](./alternatives.md).
 
+## Project Background
+
+**Organization**: GFOSS – Open Technologies Alliance
+
+**Project**: Exploring and Abstracting Triplestore Alternatives
+
+**Contributor**: [Maria-Malamati Papadopoulou(goes by Maira Papadopoulou)](https://github.com/mairacs)
+
+**Mentor**: [Alexios Zavras](https://github.com/zvr)
 
 ## License
 
-All code in this repository is licensed under the `Apache-2.0` license.
+All code in this repository is licensed under the `Apache-2.0` license. See the [LICENSE](LICENSE) file for the full text.
 
 ### Notice
 
-Some of the contents may have been developed with support
-from one or more generative Artificial Intelligence solutions.
+Some of the contents may have been developed with support from one or more generative Artificial Intelligence solutions.
 

@@ -14,13 +14,17 @@ src/triplestore/
 │   ├── graphdb.py
 │   ├── jena.py
 │   ├── jena_utils.py
-│   └── oxigraph.py
+│   ├── oxigraph.py
+│   ├── qlever.py
+│   ├── rdf4j.py
+│   └── virtuoso.py
 ├── __init__.py           # Public API surface
 ├── base.py               # Abstract base class defining the backend interface
 ├── exceptions.py         # Custom exception hierarchy for consistent error handling
 ├── registration.py       # Backend discovery and availability via entry points
 ├── triplestore.py        # Factory function
-└── utils.py              # Shared utilities
+├── utils.py              # Shared utilities
+└── utils_geo.py          # Shared geospatial utilities
 
 ```
 
@@ -34,22 +38,23 @@ The `__init__.py` file defines the library’s public API surface.
 ## Base Interface (`base.py`)
 All concrete backends inherit from `TriplestoreBackend` and must implement a common set of operations:
 - `load(filename: str) -> None`:
-Load RDF data from a Turtle (`.ttl`) file into the store.
+Load RDF data from a file into the store.
 
-- `add(subj: str, pred: str, obj: str) -> None`: 
+- `add(subj: Any, pred: Any, obj: Any) -> None`: 
 Insert a single triple.
 
-- `delete(subj: str, pred: str, obj: str) -> None`:
+- `delete(subj: Any, pred: Any, obj: Any) -> None`:
 Remove a single triple.
 
-- `query(sparql: str) -> Any`: 
-Execute a SPARQL `SELECT` query. Returns a list of dictionaries, one per result binding.
+- `query(sparql: str, *, export: bool = False, output_format: str = "json", filename: str | None = None, separator: str = ",") -> Any`:
+Execute a SPARQL `SELECT` query and return a list of dictionaries, one per result binding. When `export=True`, the results can also be written to a file.
 
-- `execute(sparql: str) -> Any`:
-Execute any SPARQL query form:
+- `execute(sparql: str, *, export: bool = False, output_format: str | None = None, filename: str | None = None, separator: str = ",") -> Any`:
+  Execute any SPARQL query form. Depending on the query type, it may return:
+  - `SELECT` → returns a list of dictionaries
   - `ASK` → returns a `bool`
-  - `CONSTRUCT` / `DESCRIBE` → returns a Turtle string
-  - `UPDATE` operations → return `None`
+  - `CONSTRUCT` / `DESCRIBE` → returns an RDF serialization string
+  - `UPDATE` operations → returns `None`
 
 - `clear() -> None`:
 Remove all data from the store.
@@ -91,7 +96,7 @@ It performs the following steps:
 - **Instantiates and returns** the backend as a ready-to-use `TriplestoreBackend` object.
 
 ## Shared Utilities (`utils.py`)
-This module provides helper functions for backend configuration and environment detection:
+This module provides helper functions shared by backend implementations.
 - `validate_config(user_config, *, required_keys, optional_defaults, alias_map, backend_name)`:
 Normalizes a backend configuration dictionary by:
   - Resolving key aliases,
@@ -99,7 +104,56 @@ Normalizes a backend configuration dictionary by:
   - Verifying all required keys are present,
   - Preserving unknown keys (with a warning).
   - Raises `TriplestoreMissingConfigValue` if required keys are missing.
+
+- `detect_host_url(port: int, path: str = "", fallback: str | None = None)`:
+Returns a best-effort URL for services running on the host machine, including WSL host detection. Falls back to `localhost` or to the provided fallback URL.
+
 - `detect_graphdb_url()`: Returns a best-effort base URL for a local GraphDB instance, including WSL host detection. This makes quick-start examples work out of the box.
+
+- `get_sparql_query_type(sparql: str)`:
+Detects the top-level SPARQL query or update form, ignoring leading `PREFIX`, `BASE`, and comment lines.
+
+- `resolve_export_format(query_type, *, export, output_format, backend_name)`:
+Resolves and validates the export format for a SPARQL query. It applies default formats when needed and rejects unsupported query/format combinations.
+
+- `export_select_results(results, output_format, filename=None, separator=",", backend_name="backend")`:
+Exports `SELECT` results to `json`, `csv`, `geojson`, `kml`, `kmz`, or `gml`.
+
+- `export_ask_result(result, output_format, filename=None, backend_name="backend")`:
+Exports `ASK` results to `json` or `txt`.
+
+- `export_rdf_result(rdf_text, output_format, filename=None, backend_name="backend")`:
+Exports RDF results from `CONSTRUCT` or `DESCRIBE` queries. Currently supports Turtle (`ttl`).
+
+- `serialize_rdf_term(term, backend_name="backend")`:
+Converts supported Python values into SPARQL-compatible RDF terms, including IRIs, blank nodes, plain literals, typed literals, and language-tagged literals.
+
+- `validate_rdf_term(term, position, backend_name="backend")`:
+ Validates that a term is allowed in a given RDF triple position (`subject`, `predicate`, or `object`) and returns its serialized representation.
+
+- `get_rdf_content_type(filename: str, backend_name="backend")`:
+Returns the HTTP `Content-Type` for supported RDF file formats such as Turtle (`.ttl`) and N-Triples (`.nt`).
+
+## Shared Geospatial Utilities (`utils_geo.py`)
+This module provides helper functions for exporting geospatial `SELECT` query results.
+
+- `export_geospatial_select_results(results, *, output_format, output_path, backend_name="backend")`:
+Exports geospatial `SELECT` results to `geojson`, `kml`, `kmz`, or `gml`.
+
+Internally, the module:
+- Detects geometry values returned as GeoJSON objects or WKT literals.
+- Converts each result row into a GeoJSON-like `Feature`.
+- Builds a `FeatureCollection` for GeoJSON export.
+- Converts supported geometries to KML or GML XML.
+- Creates KMZ archives by wrapping the generated KML document.
+
+Supported geometry types include:
+- `Point`
+- `LineString`
+- `Polygon`
+- `MultiPoint`
+- `MultiLineString`
+- `MultiPolygon`
 
 ## Minimal Example
 **Pick a backend & count triples**

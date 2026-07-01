@@ -4,7 +4,7 @@ The `Triplestore` class provides a unified Python interface to multiple RDF trip
 It abstracts away backend-specific details and exposes a consistent API for common operations such as loading data, executing SPARQL queries, and modifying triples.
 
 This abstraction layer allows developers to:
-- Switch between different triplestore implementations (e.g., AllegroGraph, Apache Jena, GraphDB, Blazegraph, Oxigraph) without changing application code.
+- Switch between different triplestore implementations (e.g., AllegroGraph, Apache Jena, GraphDB, Blazegraph, Oxigraph, QLever, RDF4J, Virtuoso) without changing application code.
 - Focus on querying and managing RDF data rather than handling low-level backend differences.
 
 By using the `Triplestore`, you can write code that is portable across different RDF engines, simplifying experimentation and integration in projects that rely on linked data.
@@ -18,7 +18,7 @@ This constructor abstracts away the differences between triplestore implementati
 
 **Arguments**
 
-- **backend** (`str`, required): The backend identifier, e.g., `"allegrograph"` | `"jena"` | `"graphdb"` | `"blazegraph"` | `"oxigraph"`. The backend must be both supported by the library and available in the current environment. 
+- **backend** (`str`, required): The backend identifier, e.g., `"allegrograph"` | `"jena"` | `"graphdb"` | `"blazegraph"` | `"oxigraph"` | `"qlever"` | `"rdf4j"` | `"virtuoso"`. The backend must be both supported by the library and available in the current environment. 
 - **config** (`dict[str, Any]`, required): A dictionary of configuration parameters for the selected backend. See [Configuration Parameters](#configuration-parameters) below for common and backend-specific keys.
 
 **Returns**
@@ -93,12 +93,11 @@ store = Triplestore("oxigraph", config={"graph": "http://example.org/test"})
 Each `Triplestore` objects exposes six methods:
 
 ## load(filename:str)
-**Purpose**: Load RDF triples from a Turtle file (`.ttl`) into the triplestore.
+**Purpose**: Load RDF data from a local file into the triplestore.
 
 **Arguments**: 
 
-- `filename` (str, required): Absolute or relative path to the RDF file to be loaded (must be in Turtle `.ttl` format).  
-  Other serializations are not supported.
+- `filename` (str, required): Absolute or relative path to the RDF file to be loaded.
 
 **Returns**
 
@@ -118,13 +117,13 @@ Each `Triplestore` objects exposes six methods:
 store.load("data.ttl")
 ```
 
-## add(subject: str, predicate: str, object: str)
+## add(subject: Any, predicate: Any, object: Any)
 **Purpose**: Insert a single RDF triple into the triplestore.
 
 **Arguments**:
-- `subject` (str, required): The subject IRI of the triple.  
-- `predicate` (str, required): The predicate IRI of the triple.  
-- `object` (str, required): The object IRI of the triple.  
+- `subject` (Any, required): The RDF subject. Must be an IRI string or a blank node identifier. 
+- `predicate` (Any, required): The RDF predicate. Must be an IRI string. 
+- `object` (Any, required): The RDF object. May be an IRI string, a blank node identifier, a plain Python literal (`str`, `int`, `float`, `bool`), or a literal mapping with `value`, `datatype`, or `lang`.
 
 **Returns**
 
@@ -136,19 +135,20 @@ store.load("data.ttl")
 - Otherwise, the triple is inserted into the backend’s default graph.
 
 **Exceptions**
-- `RuntimeError`: If the backend rejects the update or responds with a non-success HTTP status.  
+- `RuntimeError`: If the backend rejects the update or responds with a non-success HTTP status.
+- `ValueError`: If one of the RDF terms is invalid for its triple position.  
 
 ```python
-store.add("http://example.org/s", "http://example.org/p", "http://example.org/o")
+store.add("http://example.org/Alice", "http://example.org/age", 15)
 ```
 
-## delete(subject: str, predicate: str, object: str)
+## delete(subject: Any, predicate: Any, object: Any)
 **Purpose**: Remove a single RDF triple from the triplestore.
 
 **Arguments**:
-- `subject` (str, required): The subject IRI of the triple.  
-- `predicate` (str, required): The predicate IRI of the triple.  
-- `object` (str, required): The object IRI of the triple. 
+- `subject` (`Any`, required): The RDF subject. Must be an IRI string or a blank node identifier.
+- `predicate` (`Any`, required): The RDF predicate. Must be an IRI string.
+- `object` (`Any`, required): The RDF object. May be an IRI string, a blank node identifier, a plain Python literal (`str`, `int`, `float`, `bool`), or a literal mapping with `value`, `datatype`, or `lang`.
 
 **Returns**
 
@@ -161,15 +161,21 @@ store.add("http://example.org/s", "http://example.org/p", "http://example.org/o"
 
 **Exceptions**
 - `RuntimeError`: If the backend rejects the update or responds with a non-success HTTP status.
+- `ValueError`: If one of the RDF terms is invalid for its triple position.
+
 ```python
-store.delete("http://example.org/s", "http://example.org/p", "http://example.org/o")
+store.delete("http://example.org/Alice", "http://example.org/age", 15)
 ```
 
-## query(sparql: str) -> list[dict[str, str]]
-**Purpose**: Execute a SPARQL **SELECT** query and return the results as a list of dictionaries.
+## def query(self, sparql: str, *, export: bool = False, output_format: str = "json", filename: str | None = None, separator: str = ",") -> Any:
+**Purpose**: Execute a SPARQL `SELECT` query and return the results as a list of dictionaries. Optionally, the results can also be exported to a file.
 
 **Arguments**:
-- `sparql` (str, required): A valid SPARQL `SELECT` query string.
+- `sparql` (`str`, required): A valid SPARQL `SELECT` query string.
+- `export` (`bool`, optional): If `True`, export the query results to a local file. Defaults to `False`.
+- `output_format` (`str`, optional): Export format to use when `export=True`. Supported formats for `SELECT` results are `json`, `csv`, `geojson`, `kml`, `kmz`, and `gml`. Defaults to `json`.
+- `filename` (`str | None`, optional): Output filename to use when exporting results. If omitted, default filename `results` is used.
+- `separator` (`str`, optional): Column separator used for CSV export. Defaults to `","`.
 
 **Returns**:
 
@@ -181,13 +187,25 @@ store.delete("http://example.org/s", "http://example.org/p", "http://example.org
 
 ```python
 results = store.query("SELECT ?s ?p ?o WHERE { ?s ?p ?o }")
+
+store.query("SELECT ?s ?p ?o WHERE { ?s ?p ?o }", export=True, output_format="json", filename="results")
 ```
 
-## execute(sparql: str) -> Any
-**Purpose**: Execute any SPARQL query, including **SELECT, ASK, CONSTRUCT, DESCRIBE, and UPDATE(INSERT, DELETE etc)** operations.
+## def execute(self, sparql: str, *, export: bool = False, output_format: str | None = None, filename: str | None = None, separator: str = ",") -> Any:
+**Purpose**: Execute any SPARQL query or update operation, including `SELECT`, `ASK`, `CONSTRUCT`, `DESCRIBE`, and SPARQL Update operations such as `INSERT`, `DELETE`, and `CLEAR`.
  
 **Arguments**:
-- `sparql` (str, required): A valid SPARQL query or update string.
+- `sparql` (`str`, required): A valid SPARQL query or update string.
+- `export` (`bool`, optional): If `True`, export the result to a local file when the query type supports export. Defaults to `False`.
+- `output_format` (`str | None`, optional): Export format to use when `export=True`. If omitted, a default format is selected based on the query type.
+- `filename` (`str | None`, optional): Output filename to use when exporting results. If omitted, default filename `results` is used.
+- `separator` (`str`, optional): Column separator used for CSV export. Defaults to `","`.
+
+**Supported export formats**:
+- `SELECT`: `json`, `csv`, `geojson`, `kml`, `kmz`, `gml`
+- `ASK`: `json`, `txt`
+- `CONSTRUCT` / `DESCRIBE`: `ttl`
+- SPARQL Update operations: export is not supported
 
 **Returns**:
 - `list[dict[str, str]]` — for `SELECT` queries, a list of result rows as variable bindings.  
@@ -204,6 +222,8 @@ Although it can also execute SELECT queries, `query()` is the recommended method
 
 ```python
 results = store.execute("CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }")
+
+store.execute("CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }", export=True, output_format="ttl", filename="graph")
 ```
 
 ## clear()

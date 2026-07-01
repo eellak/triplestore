@@ -33,7 +33,8 @@ class TriplestoreBackend(ABC):
         """
 
     @abstractmethod
-    def query(self, sparql: str) -> Any:
+    def query(self, sparql: str, *, export: bool = False, 
+              output_format: str = "json", filename: str | None = None, separator: str = ",") -> Any:
         """
         Execute a SPARQL *SELECT* query and return results.
 
@@ -41,7 +42,8 @@ class TriplestoreBackend(ABC):
         """
 
     @abstractmethod
-    def execute(self, sparql: str) -> Any:
+    def execute(self, sparql: str, *, export: bool = False, 
+                output_format: str | None = None, filename: str | None = None, separator: str = ",") -> Any:
         """
         Execute any SPARQL query (SELECT, ASK, CONSTRUCT, DESCRIBE, UPDATE).
 

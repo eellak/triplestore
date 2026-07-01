@@ -29,6 +29,18 @@ The following triplestores have been successfully integrated into this library:
   - **License**: MIT  
   - **Deployment**: provided as a native Rust binary with Python bindings available  
 
+### QLever
+  - **License**: Apache-2.0
+  - **Deployment**: managed through the `qlever` command-line tool; requires Docker running in the background
+
+### RDF4J
+  - **License**: Eclipse Distribution License (EDL) v1.0
+  - **Deployment**: distributed as a Docker image
+
+### Virtuoso
+  - **License**: GPL-2.0 
+  - **Deployment**: provided as a native server binary; can be run with a system-installed or locally built configuration 
+
 ---
 
 ## Evaluated but Not Implemented

@@ -1,7 +1,7 @@
 # Triplestore Abstraction Library
 
 This library provides a unified interface for interacting
-with various triplestore backends.
+with various RDF and GeoSPARQL triplestore backends.
 It allows developers to write code that is agnostic
 to the underlying triplestore implementation.
 
@@ -10,6 +10,7 @@ to the underlying triplestore implementation.
 - Common API for multiple triplestore backends
 - Easy integration and backend switching
 - Support for basic CRUD operations on triples
+- GeoSPARQL support when provided by the selected backend
 - Extensible for new triplestore implementations
 
 ## Supported Backends
@@ -22,14 +23,15 @@ Currently supported backends (alphabetically):
 - Blazegraph
 - GraphDB
 - Oxigraph
+- QLever
+- RDF4J
+- Virtuoso
 
 ## Installation
 
 You can install the library along with **all supported backends** using:
 
 ```bash
-pip install triplestore
-# or
 pip install triplestore[all]
 ```
 
@@ -40,6 +42,11 @@ pip install triplestore[<backend>]
 For example:
 ```bash
 pip install triplestore[oxigraph]
+```
+
+GeoSPARQL-related dependencies are optional and can be installed separately with:
+```bash
+pip install triplestore[geo]
 ```
 
 ## Usage

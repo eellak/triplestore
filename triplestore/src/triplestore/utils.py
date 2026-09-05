@@ -620,6 +620,12 @@ def validate_rdf_term(term: Any, position: str, backend_name: str = "backend") -
     if position == "object":
         return serialized
 
+    msg = (
+        f"[{backend_name}] Invalid RDF position: {position!r}. "
+        "Expected 'subject', 'predicate', or 'object'."
+    )
+    raise ValueError(msg)
+
 
 def _escape_literal(value: str) -> str:
     return (

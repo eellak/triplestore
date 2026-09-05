@@ -7,6 +7,7 @@ import json
 import logging
 import platform
 import re
+import shutil
 import subprocess
 from collections.abc import Iterable, Mapping
 from pathlib import Path
@@ -68,7 +69,11 @@ def detect_host_url(port: int, path: str = "", fallback: str | None = None) -> s
     """
     try:
         if "microsoft" in platform.uname().release.lower():
-            route = subprocess.check_output(["ip", "route"]).decode()
+            ip_command = shutil.which("ip")
+            if ip_command is None:
+                return fallback or f"http://localhost:{port}{path}"
+
+            route = subprocess.check_output([ip_command, "route"]).decode()
             for line in route.splitlines():
                 if line.startswith("default via"):
                     ip = line.split()[2]

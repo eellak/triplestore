@@ -1,6 +1,6 @@
 [project]
 name = "rdf-triplestore"
-version = "0.2.0"
+version = "0.2.1"
 description = "A unified abstraction layer for interacting with multiple RDF triplestore backends"
 readme = "README.md"
 authors = [

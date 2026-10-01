@@ -172,11 +172,22 @@ class Jena(TriplestoreBackend):
             RDFLib URIRef, BNode, and Literal values are also supported.
         """
         serialized_triples = []
+        blank_node_map: dict[str, str] = {}
 
         for s, p, o in triples:
             s_term = validate_rdf_term(s, "subject", "APACHE JENA")
             p_term = validate_rdf_term(p, "predicate", "APACHE JENA")
             o_term = validate_rdf_term(o, "object", "APACHE JENA")
+
+            if s_term.startswith("_:"):
+                if s_term not in blank_node_map:
+                    blank_node_map[s_term] = f"_:b{len(blank_node_map)}"
+                s_term = blank_node_map[s_term]
+
+            if o_term.startswith("_:"):
+                if o_term not in blank_node_map:
+                    blank_node_map[o_term] = f"_:b{len(blank_node_map)}"
+                o_term = blank_node_map[o_term]
 
             serialized_triples.append(f"{s_term} {p_term} {o_term} .")
 

@@ -37,6 +37,7 @@ class Oxigraph(TriplestoreBackend):
     REQUIRED_KEYS = set()
     OPTIONAL_DEFAULTS = {
         "graph": None,
+        "name": None,
     }
     ALIASES = {
         "graph_uri": "graph",
@@ -55,7 +56,12 @@ class Oxigraph(TriplestoreBackend):
                                         alias_map=self.ALIASES, backend_name="Oxigraph")
 
         super().__init__(configuration)
-        self.store = Store()
+        store_path = configuration["name"]
+
+        if store_path:
+            self.store = Store(store_path)
+        else:
+            self.store = Store()
         self.graph_uri: str | None = configuration["graph"]
         if self.graph_uri:
             self.store.add_graph(NamedNode(self.graph_uri))

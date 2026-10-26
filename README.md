@@ -40,7 +40,7 @@ pip install rdf-triplestore[geo]
 
 ## Quick Start
 ```python
-from triplestore import Triplestore
+from rdf_triplestore import Triplestore
 
 store = Triplestore("oxigraph", config={})
 
@@ -56,8 +56,8 @@ store.clear()
 
 ## 📚 Documentation
 
-- [REFERENCE.md](./triplestore/docs/REFERENCE.md): Detailed API reference
-- [HOWTO.md](./triplestore/docs/HOWTO.md): Usage and configuration guide
+- [REFERENCE.md](./rdf-triplestore/docs/REFERENCE.md): Detailed API reference
+- [HOWTO.md](./rdf-triplestore/docs/HOWTO.md): Usage and configuration guide
 - [alternatives.md](./alternatives.md): Candidate triplestores and their characteristics
 - [GSoC.md](./docs/GSoC.md): Project Report
 - [BENCHMARKING.md](./docs/BENCHMARKING.md): Benchmarking report

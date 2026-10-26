@@ -1,3 +1,3 @@
 :
-uv run python -c 'import rdf_triplestore; print("Tripestore loaded.\nAvailable backends:", triplestore.available_backends())'
+uv run python -c 'import rdf_triplestore; print("Triplestore loaded.\nAvailable backends:", rdf_triplestore.available_backends())'
 
